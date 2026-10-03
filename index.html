@@ -43,10 +43,10 @@
     <button id="zoomLabel" data-action="zoomReset" title="Reset to 100%">100%</button>
     <button data-action="zoomIn" title="Zoom in (+)">+</button>
     <span class="sep"></span>
-    <button data-action="fitWidth" title="Fit width (W)">⇔ Fit W</button>
-    <button data-action="fitAll" title="Fit whole crop area (F)">⤢ Fit</button>
-    <span class="sep"></span>
-    <button data-action="pan" id="btnPan" title="Pan: drag to move content (P)">✥ Pan</button>
+    <button data-action="fitWidth" data-magnify-only title="Fit width (W)">⇔ Fit W</button>
+    <button data-action="fitAll" data-magnify-only title="Fit whole crop area (F)">⤢ Fit</button>
+    <span class="sep" data-magnify-only></span>
+    <button data-action="pan" id="btnPan" data-magnify-only title="Pan: drag to move content (P)">✥ Pan</button>
     <button data-action="crop" id="btnCrop" title="Crop: drag a rectangle (C)">✂ Crop</button>
     <button data-action="uncrop" title="Remove crop">⊘</button>
     <span class="sep"></span>
@@ -66,13 +66,19 @@
 
       <fieldset>
         <legend>Layout</legend>
-        <label>Page width (px)
-          <input name="vw" type="number" min="320" max="6000" step="10" />
+        <label class="full">Zoom behaves like
+          <select name="zoomMode">
+            <option value="browser">Browser zoom – charts &amp; tables reflow to fit (recommended)</option>
+            <option value="magnify">Magnify – fixed layout, scaled like a picture</option>
+          </select>
         </label>
-        <label>Page height (px)
-          <input name="vh" type="number" min="200" max="12000" step="10" />
+        <label>Window width at 100% (px)
+          <input name="vw" type="number" min="320" max="6000" step="1" />
         </label>
-        <label>Scaling
+        <label>Page height (magnify only)
+          <input name="vh" type="number" min="200" max="12000" step="1" />
+        </label>
+        <label>Scaling (magnify only)
           <select name="fit">
             <option value="width">Fit width</option>
             <option value="contain">Fit whole area</option>
@@ -80,18 +86,18 @@
             <option value="none">Fixed zoom</option>
           </select>
         </label>
-        <label>Zoom % (fixed)
-          <input name="zoom" type="number" min="5" max="500" step="5" />
+        <label>Zoom %
+          <input name="zoom" type="number" min="5" max="500" step="any" />
         </label>
-        <p class="help full">Page width is the "browser width" Quickbase lays the dashboard out at. Wider = more columns side by side; then zoom/fit scales it into the frame.</p>
+        <p class="help full"><b>Browser zoom:</b> the box acts like a browser window that is <i>Window width</i> px wide at 100%. Zooming in works like Ctrl&nbsp;+ in a browser – the dashboard re-lays out, so charts and tables grow and refit the box. Scroll inside the dashboard as usual.<br><b>Magnify:</b> the dashboard is laid out at Window width × Page height and scaled to the box.</p>
       </fieldset>
 
       <fieldset>
         <legend>Crop (px of page)</legend>
-        <label>Left <input name="cl" type="number" min="0" step="5" /></label>
-        <label>Top <input name="ct" type="number" min="0" step="5" /></label>
-        <label>Right <input name="cr" type="number" min="0" step="5" /></label>
-        <label>Bottom <input name="cb" type="number" min="0" step="5" /></label>
+        <label>Left <input name="cl" type="number" min="0" step="1" /></label>
+        <label>Top <input name="ct" type="number" min="0" step="1" /></label>
+        <label>Right <input name="cr" type="number" min="0" step="1" /></label>
+        <label>Bottom <input name="cb" type="number" min="0" step="1" /></label>
       </fieldset>
 
       <fieldset>

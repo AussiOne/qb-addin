@@ -74,6 +74,7 @@ body.show-toolbar #toolbar,
 body.toolbar-pinned #toolbar { transform: translateY(0); opacity: 1; }
 body.slideshow:not(.toolbar-in-show) #toolbar { display: none; }
 body.mode-crop #toolbar, body.mode-crop #hotzone { display: none; }
+body.zoom-browser [data-magnify-only] { display: none !important; }
 
 #toolbar button {
   background: transparent; color: inherit; border: 0; border-radius: 5px;

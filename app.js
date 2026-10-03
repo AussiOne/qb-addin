@@ -9,12 +9,21 @@
  *   - zoom z scales page px -> screen px (computed from the frame size in fit modes).
  *   - pan {x,y} scrolls inside the cropped region when it is larger than the frame.
  *   - The PowerPoint frame itself is moved/resized with PowerPoint's own handles.
+ *
+ * Two zoom behaviours (state.zoomMode):
+ *   "browser" (default) – behaves like Ctrl +/- in a browser. The page is laid out in a
+ *       "window" of  (vw / zoom) px  wide with the box's aspect ratio, then scaled to fill the
+ *       box. Zooming in narrows the layout, so Quickbase charts/tables reflow and resize.
+ *       The layout does not depend on PowerPoint's editor zoom, so edit view and slideshow match.
+ *   "magnify" – the page is laid out at a fixed vw × vh and simply scaled (like a picture).
  */
 (function () {
   "use strict";
 
   const KEY = "qbLiveDashboard";
   const MIN_Z = 0.05, MAX_Z = 5;
+  // Same zoom steps as Chrome / Edge
+  const BROWSER_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
   const SWAP_DELAY_MS = 2500;   // let Quickbase render its widgets before swapping frames
   const SLOW_LOAD_MS = 25000;
 
@@ -22,7 +31,8 @@
     v: 1,
     url: "",
     vw: 1600, vh: 1000,
-    fit: "width",            // width | contain | cover | none
+    zoomMode: "browser",     // browser | magnify
+    fit: "width",            // width | contain | cover | none  (magnify mode)
     zoom: 1,
     crop: { l: 0, t: 0, r: 0, b: 0 },
     pan: { x: 0, y: 0 },
@@ -64,6 +74,7 @@
     o.vh = clamp(num(o.vh, 1000), 200, 12000);
     o.zoom = clamp(num(o.zoom, 1), MIN_Z, MAX_Z);
     if (!["width", "contain", "cover", "none"].includes(o.fit)) o.fit = "width";
+    if (!["browser", "magnify"].includes(o.zoomMode)) o.zoomMode = "browser";
     ["l", "t", "r", "b"].forEach((k) => { o.crop[k] = Math.max(0, num(o.crop[k], 0)); });
     // never crop away the whole page
     if (o.crop.l + o.crop.r > o.vw - 20) { o.crop.l = 0; o.crop.r = 0; }
@@ -103,6 +114,21 @@
   function computeGeometry(full) {
     const sw = Math.max(1, stage.clientWidth), sh = Math.max(1, stage.clientHeight);
     const c = full ? { l: 0, t: 0, r: 0, b: 0 } : state.crop;
+
+    if (state.zoomMode === "browser") {
+      // Virtual browser window: vw/zoom wide, same aspect ratio as the box.
+      const pageW = state.vw / state.zoom;
+      const pageH = pageW * sh / sw;
+      const cw = Math.max(20, pageW - c.l - c.r);
+      const ch = Math.max(20, pageH - c.t - c.b);
+      const z = Math.min(sw / cw, sh / ch);   // crop area is enlarged to fill the box
+      const g = { sw, sh, c, fit: "contain", pageW, pageH, cw, ch, z,
+                  visW: cw, visH: ch, maxPanX: 0, maxPanY: 0 };
+      g.clipW = cw * z; g.clipH = ch * z;
+      g.left = (sw - g.clipW) / 2; g.top = (sh - g.clipH) / 2;
+      return g;
+    }
+
     const fit = full ? "contain" : state.fit;
     const cw = Math.max(20, state.vw - c.l - c.r);
     const ch = Math.max(20, state.vh - c.t - c.b);
@@ -115,7 +141,8 @@
     }
     z = clamp(z, MIN_Z, MAX_Z);
     const visW = Math.min(cw, sw / z), visH = Math.min(ch, sh / z);
-    const g = { sw, sh, c, fit, cw, ch, z, visW, visH, maxPanX: cw - visW, maxPanY: ch - visH };
+    const g = { sw, sh, c, fit, pageW: state.vw, pageH: state.vh, cw, ch, z,
+                visW, visH, maxPanX: cw - visW, maxPanY: ch - visH };
     const clipW = visW * z, clipH = visH * z;
     g.clipW = clipW; g.clipH = clipH;
     g.left = clipW < sw ? (sw - clipW) / 2 : 0;
@@ -138,13 +165,16 @@
     clip.style.width = g.clipW + "px";
     clip.style.height = g.clipH + "px";
 
-    canvas.style.width = state.vw + "px";
-    canvas.style.height = state.vh + "px";
+    canvas.style.width = g.pageW + "px";
+    canvas.style.height = g.pageH + "px";
     const tx = -(g.c.l + pan.x) * g.z, ty = -(g.c.t + pan.y) * g.z;
     canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${g.z})`;
 
-    zoomLabel.textContent = Math.round(g.z * 100) + "%";
-    zoomLabel.title = state.fit === "none" ? "Reset to 100%" : `Scaling: ${fitName(state.fit)} – click for 100%`;
+    const browser = state.zoomMode === "browser";
+    zoomLabel.textContent = Math.round((browser ? state.zoom : g.z) * 100) + "%";
+    zoomLabel.title = browser ? "Browser zoom – click to reset to 100%"
+      : state.fit === "none" ? "Reset to 100%" : `Scaling: ${fitName(state.fit)} – click for 100%`;
+    document.body.classList.toggle("zoom-browser", browser);
 
     document.body.classList.toggle("mode-pan", mode === "pan");
     document.body.classList.toggle("mode-crop", mode === "crop");
@@ -236,6 +266,11 @@
 
   // ---------- Zoom ----------
   function setZoom(newZ, anchorX, anchorY) {
+    if (state.zoomMode === "browser") {
+      state.zoom = clamp(newZ, BROWSER_STEPS[0], BROWSER_STEPS[BROWSER_STEPS.length - 1]);
+      render(); saveState();
+      return;
+    }
     const g = geo || computeGeometry(false);
     newZ = clamp(Math.round(newZ * 100) / 100, MIN_Z, MAX_Z);
     // keep the content point under the anchor (default: frame centre) fixed
@@ -251,6 +286,13 @@
     render(); saveState();
   }
   const zoomStep = (dir) => {
+    if (state.zoomMode === "browser") {
+      const cur = state.zoom;
+      const next = dir > 0 ? BROWSER_STEPS.find((s) => s > cur + 0.001)
+                           : BROWSER_STEPS.slice().reverse().find((s) => s < cur - 0.001);
+      if (next) setZoom(next);
+      return;
+    }
     const z = (geo || computeGeometry(false)).z;
     setZoom(dir > 0 ? z * 1.1 : z / 1.1);
   };
@@ -316,18 +358,18 @@
     } else if (mode === "crop") {
       const g = geo; // full-page geometry while cropping
       const toPage = (sx, sy) => ({
-        x: clamp((sx - g.left) / g.z, 0, state.vw),
-        y: clamp((sy - g.top) / g.z, 0, state.vh)
+        x: clamp((sx - g.left) / g.z, 0, g.pageW),
+        y: clamp((sy - g.top) / g.z, 0, g.pageH)
       });
       const a = toPage(Math.min(p.x, drag.start.x), Math.min(p.y, drag.start.y));
       const b = toPage(Math.max(p.x, drag.start.x), Math.max(p.y, drag.start.y));
       if (b.x - a.x >= 20 && b.y - a.y >= 20) {
         state.crop = {
           l: Math.round(a.x), t: Math.round(a.y),
-          r: Math.round(state.vw - b.x), b: Math.round(state.vh - b.y)
+          r: Math.round(g.pageW - b.x), b: Math.round(g.pageH - b.y)
         };
         state.pan = { x: 0, y: 0 };
-        state.fit = "contain";
+        if (state.zoomMode === "magnify") state.fit = "contain";
         saveState();
       }
       cropRect.hidden = true;
@@ -344,7 +386,8 @@
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       const p = stagePoint(e);
-      setZoom(geo.z * (e.deltaY < 0 ? 1.1 : 1 / 1.1), p.x, p.y);
+      if (state.zoomMode === "browser") zoomStep(e.deltaY < 0 ? 1 : -1);
+      else setZoom(geo.z * (e.deltaY < 0 ? 1.1 : 1 / 1.1), p.x, p.y);
     } else if (mode === "pan") {
       state.pan.x += e.deltaX / geo.z;
       state.pan.y += e.deltaY / geo.z;
@@ -380,6 +423,7 @@
     f.url.value = state.url;
     f.vw.value = state.vw; f.vh.value = state.vh;
     f.fit.value = state.fit;
+    f.zoomMode.value = state.zoomMode;
     f.zoom.value = Math.round(state.zoom * 100);
     f.cl.value = state.crop.l; f.ct.value = state.crop.t;
     f.cr.value = state.crop.r; f.cb.value = state.crop.b;
@@ -404,11 +448,12 @@
     f.url.setCustomValidity("");
     const urlChanged = url !== state.url;
     const zoomInput = num(f.zoom.value, 100) / 100;
-    const fitWas = state.fit;
+    const fitWas = state.fit + state.zoomMode;
     state = normalize({
       url,
       vw: f.vw.value, vh: f.vh.value,
       fit: f.fit.value,
+      zoomMode: f.zoomMode.value,
       zoom: zoomInput,
       crop: { l: f.cl.value, t: f.ct.value, r: f.cr.value, b: f.cb.value },
       pan: state.pan,
@@ -417,7 +462,7 @@
       toolbarInShow: f.toolbarInShow.checked,
       locked: f.locked.checked
     });
-    if (urlChanged || fitWas !== state.fit) state.pan = { x: 0, y: 0 };
+    if (urlChanged || fitWas !== state.fit + state.zoomMode) state.pan = { x: 0, y: 0 };
     applyBodyFlags();
     saveState();
     closeSettings();
@@ -484,9 +529,9 @@
     zoomIn: () => zoomStep(1),
     zoomOut: () => zoomStep(-1),
     zoomReset: () => setZoom(1),
-    fitWidth: () => setFit("width"),
-    fitAll: () => setFit("contain"),
-    pan: () => setMode("pan"),
+    fitWidth: () => { if (state.zoomMode === "magnify") setFit("width"); },
+    fitAll: () => { if (state.zoomMode === "magnify") setFit("contain"); },
+    pan: () => { if (state.zoomMode === "magnify") setMode("pan"); },
     crop: () => setMode("crop"),
     uncrop: () => { state.crop = { l: 0, t: 0, r: 0, b: 0 }; state.pan = { x: 0, y: 0 }; render(); saveState(); },
     reload: () => loadDashboard(),
