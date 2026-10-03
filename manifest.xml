@@ -18,9 +18,9 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Quickbase Live Dashboard"/>
   <Description DefaultValue="Embed live Quickbase dashboards on a slide, with zoom, pan, crop and auto-refresh."/>
-  <IconUrl DefaultValue="https://AussiOne/qb-addin/qb-addin/assets/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://AussiOne/qb-addin/qb-addin/assets/icon-64.png"/>
-  <SupportUrl DefaultValue="https://AussiOne/qb-addin/qb-addin/index.html"/>
+  <IconUrl DefaultValue="https://AussiOne/qb-addin/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://AussiOne/qb-addin/assets/icon-64.png"/>
+  <SupportUrl DefaultValue="https://AussiOne/qb-addin/index.html"/>
   <AppDomains>
     <AppDomain>https://jacobselectronics.quickbase.com</AppDomain>
     <AppDomain>https://quickbase.com</AppDomain>
@@ -34,7 +34,7 @@
     </Sets>
   </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://AussiOne/qb-addin/qb-addin/index.html"/>
+    <SourceLocation DefaultValue="https://AussiOne/qb-addin/index.html"/>
     <RequestedWidth>800</RequestedWidth>
     <RequestedHeight>450</RequestedHeight>
   </DefaultSettings>
