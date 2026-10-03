@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quickbase Live Dashboard</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===== Live view ===== -->
+  <div id="stage">
+    <div id="clip">
+      <div id="canvas">
+        <iframe id="qb" title="Quickbase dashboard"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+      </div>
+    </div>
+
+    <!-- Captures mouse in Pan / Crop / Locked modes so the iframe doesn't eat events -->
+    <div id="shield" hidden></div>
+    <div id="cropRect" hidden></div>
+    <div id="hint" hidden></div>
+
+    <div id="loading" hidden>
+      <div class="spinner"></div>
+      <div id="loadingText">Loading dashboard…</div>
+    </div>
+
+    <div id="empty" hidden>
+      <img src="assets/icon-64.png" alt="" width="48" height="48" />
+      <h2>Quickbase Live Dashboard</h2>
+      <p>Paste a Quickbase dashboard or report URL to show it live on this slide.</p>
+      <button class="primary" data-action="settings">Set up dashboard</button>
+    </div>
+  </div>
+
+  <!-- ===== Toolbar (shown on hover in Normal/Edit view) ===== -->
+  <div id="toolbar" role="toolbar" aria-label="Dashboard controls">
+    <button data-action="zoomOut" title="Zoom out (−)">−</button>
+    <button id="zoomLabel" data-action="zoomReset" title="Reset to 100%">100%</button>
+    <button data-action="zoomIn" title="Zoom in (+)">+</button>
+    <span class="sep"></span>
+    <button data-action="fitWidth" title="Fit width (W)">⇔ Fit W</button>
+    <button data-action="fitAll" title="Fit whole crop area (F)">⤢ Fit</button>
+    <span class="sep"></span>
+    <button data-action="pan" id="btnPan" title="Pan: drag to move content (P)">✥ Pan</button>
+    <button data-action="crop" id="btnCrop" title="Crop: drag a rectangle (C)">✂ Crop</button>
+    <button data-action="uncrop" title="Remove crop">⊘</button>
+    <span class="sep"></span>
+    <button data-action="reload" title="Reload data (R)">⟳</button>
+    <button data-action="settings" title="Settings">⚙</button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <!-- ===== Settings panel ===== -->
+  <div id="settings" hidden>
+    <form id="settingsForm" autocomplete="off">
+      <h2>Dashboard settings <small>(this slide only)</small></h2>
+
+      <label class="full">Quickbase URL
+        <input name="url" type="url" required placeholder="https://yourrealm.quickbase.com/nav/app/…/action/dashboard?…" />
+      </label>
+
+      <fieldset>
+        <legend>Layout</legend>
+        <label>Page width (px)
+          <input name="vw" type="number" min="320" max="6000" step="10" />
+        </label>
+        <label>Page height (px)
+          <input name="vh" type="number" min="200" max="12000" step="10" />
+        </label>
+        <label>Scaling
+          <select name="fit">
+            <option value="width">Fit width</option>
+            <option value="contain">Fit whole area</option>
+            <option value="cover">Fill frame</option>
+            <option value="none">Fixed zoom</option>
+          </select>
+        </label>
+        <label>Zoom % (fixed)
+          <input name="zoom" type="number" min="5" max="500" step="5" />
+        </label>
+        <p class="help full">Page width is the "browser width" Quickbase lays the dashboard out at. Wider = more columns side by side; then zoom/fit scales it into the frame.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Crop (px of page)</legend>
+        <label>Left <input name="cl" type="number" min="0" step="5" /></label>
+        <label>Top <input name="ct" type="number" min="0" step="5" /></label>
+        <label>Right <input name="cr" type="number" min="0" step="5" /></label>
+        <label>Bottom <input name="cb" type="number" min="0" step="5" /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Live data</legend>
+        <label>Auto-refresh every (min, 0 = off)
+          <input name="refreshMin" type="number" min="0" max="1440" step="1" />
+        </label>
+        <label class="check"><input name="reloadOnShow" type="checkbox" /> Reload when the slideshow starts</label>
+        <label class="check"><input name="toolbarInShow" type="checkbox" /> Show toolbar during slideshow</label>
+        <label class="check"><input name="locked" type="checkbox" /> Lock (block clicks/scrolling inside dashboard)</label>
+      </fieldset>
+
+      <div class="buttons">
+        <button type="submit" class="primary">Save &amp; load</button>
+        <button type="button" data-action="closeSettings">Cancel</button>
+        <span class="grow"></span>
+        <button type="button" data-action="signin" title="Open a Quickbase sign-in window">Sign in to Quickbase…</button>
+        <button type="button" data-action="openExternal">Open in browser</button>
+      </div>
+
+      <details>
+        <summary>Troubleshooting</summary>
+        <ul>
+          <li><b>Blank frame or "refused to connect"</b> – your realm blocks framing. A Quickbase realm admin must turn off the security policy <i>Prevent embedding in iframes</i> (realm security policies in the Quickbase Admin Console).</li>
+          <li><b>Sign-in page appears / keeps asking to sign in</b> – click <i>Sign in to Quickbase…</i>, sign in, close that window. SSO login pages (Okta, Entra ID…) usually refuse to load inside frames, which is why sign-in happens in a separate window.</li>
+          <li><b>Signed in but frame still shows sign-in (PowerPoint on the web)</b> – the browser is blocking third-party cookies. Allow cookies for <code>[*.]quickbase.com</code> in your browser's site settings (Safari blocks these by default; use Edge or Chrome).</li>
+          <li><b>Settings lost</b> – settings are stored inside the .pptx. Save the presentation after configuring.</li>
+        </ul>
+      </details>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

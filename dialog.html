@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sign in to Quickbase</title>
+  <!-- Office dialogs must start on the add-in's own domain; this page then forwards to Quickbase. -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: "Segoe UI", system-ui, sans-serif; padding: 24px; color: #1f2937; }
+    a { color: #1e40af; }
+  </style>
+</head>
+<body>
+  <p id="msg">Opening Quickbase sign-in…</p>
+  <script>
+    (function () {
+      var msg = document.getElementById("msg");
+      var to = new URLSearchParams(location.search).get("to") || "";
+      var ok = false;
+      try {
+        var u = new URL(to);
+        var h = u.hostname.toLowerCase();
+        ok = u.protocol === "https:" && (h === "quickbase.com" || h.endsWith(".quickbase.com"));
+      } catch (e) { ok = false; }
+      if (!ok) {
+        msg.textContent = "Only https://*.quickbase.com addresses can be opened here.";
+        return;
+      }
+      msg.innerHTML = 'Redirecting to <a href="' + u.href + '">' + u.host + '</a>…<br>' +
+        "After you've signed in, close this window and the dashboard will reload.";
+      var go = function () { location.replace(u.href); };
+      if (window.Office && Office.onReady) Office.onReady(go); else go();
+      setTimeout(go, 1500);
+    })();
+  </script>
+</body>
+</html>
