@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quickbase Live Dashboard</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===== Live view ===== -->
+  <div id="stage">
+    <div id="clip">
+      <div id="canvas">
+        <iframe id="qb" title="Quickbase dashboard"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+      </div>
+    </div>
+
+    <!-- Captures mouse in Pan / Crop / Locked modes so the iframe doesn't eat events -->
+    <div id="shield" hidden></div>
+    <div id="cropRect" hidden></div>
+    <div id="hint" hidden></div>
+
+    <div id="loading" hidden>
+      <div class="spinner"></div>
+      <div id="loadingText">Loading dashboard…</div>
+    </div>
+
+    <div id="empty" hidden>
+      <img src="assets/icon-64.png" alt="" width="48" height="48" />
+      <h2>Quickbase Live Dashboard</h2>
+      <p>Paste a Quickbase dashboard or report URL to show it live on this slide.</p>
+      <button class="primary" data-action="settings">Set up dashboard</button>
+    </div>
+  </div>
+
+  <!-- ===== Toolbar (shown on hover in Normal/Edit view) =====
+       Adapts to the box size: full labels -> icons only -> a single ☰ menu button. -->
+  <button id="menuBtn" data-action="menu" title="Dashboard controls" aria-label="Dashboard controls">☰</button>
+  <div id="toolbar" role="toolbar" aria-label="Dashboard controls">
+    <button data-action="zoomOut" title="Zoom out (−)">−<span class="lbl"> Zoom out</span></button>
+    <button id="zoomLabel" data-action="zoomReset" title="Reset to 100%">100%</button>
+    <button data-action="zoomIn" title="Zoom in (+)">+<span class="lbl"> Zoom in</span></button>
+    <span class="sep"></span>
+    <button data-action="fitWidth" data-magnify-only title="Fit width (W)">⇔<span class="lbl"> Fit W</span></button>
+    <button data-action="fitAll" data-magnify-only title="Fit whole crop area (F)">⤢<span class="lbl"> Fit</span></button>
+    <span class="sep" data-magnify-only></span>
+    <button data-action="pan" id="btnPan" data-magnify-only title="Pan: drag to move content (P)">✥<span class="lbl"> Pan</span></button>
+    <button data-action="crop" id="btnCrop" title="Crop: drag a rectangle (C)">✂<span class="lbl"> Crop</span></button>
+    <button data-action="uncrop" title="Remove crop">⊘<span class="lbl"> Uncrop</span></button>
+    <button data-action="position" id="btnPos" title="Snap position &amp; background"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><rect x="1" y="1" width="4" height="4" rx=".6"/><rect x="6" y="1" width="4" height="4" rx=".6"/><rect x="11" y="1" width="4" height="4" rx=".6"/><rect x="1" y="6" width="4" height="4" rx=".6"/><rect x="6" y="6" width="4" height="4" rx=".6"/><rect x="11" y="6" width="4" height="4" rx=".6"/><rect x="1" y="11" width="4" height="4" rx=".6"/><rect x="6" y="11" width="4" height="4" rx=".6"/><rect x="11" y="11" width="4" height="4" rx=".6"/></g></svg><span class="lbl"> Position</span></button>
+    <button data-action="enlarge" id="btnEnlarge" title="Make the box bigger while you adjust it">⤢<span class="lbl"> Enlarge</span></button>
+    <button data-action="done" id="btnDone" title="Shrink the box back to its original size">✓<span class="lbl"> Done</span></button>
+    <span class="sep"></span>
+    <button data-action="reload" title="Reload data (R)">⟳<span class="lbl"> Reload</span></button>
+    <button data-action="settings" title="Settings">⚙<span class="lbl"> Settings</span></button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <!-- ===== Position / background popover ===== -->
+  <div id="posPanel" hidden>
+    <div class="pp-title">Snap content to</div>
+    <div class="snapgrid" role="group" aria-label="Snap position">
+      <button data-action="snap" data-x="left"   data-y="top"    title="Top left">◤</button>
+      <button data-action="snap" data-x="center" data-y="top"    title="Top">▲</button>
+      <button data-action="snap" data-x="right"  data-y="top"    title="Top right">◥</button>
+      <button data-action="snap" data-x="left"   data-y="middle" title="Left">◀</button>
+      <button data-action="snap" data-x="center" data-y="middle" title="Center">●</button>
+      <button data-action="snap" data-x="right"  data-y="middle" title="Right">▶</button>
+      <button data-action="snap" data-x="left"   data-y="bottom" title="Bottom left">◣</button>
+      <button data-action="snap" data-x="center" data-y="bottom" title="Bottom">▼</button>
+      <button data-action="snap" data-x="right"  data-y="bottom" title="Bottom right">◢</button>
+    </div>
+    <p class="pp-note">Applies when the content doesn't fill the box, e.g. after cropping.</p>
+    <div class="pp-title">Background</div>
+    <div class="pp-row">
+      <input type="color" id="bgPick" title="Pick a background colour" />
+      <button data-action="sampleBg" id="btnSample" title="Eyedropper: click, then click a pixel on the dashboard edge" aria-label="Eyedropper"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12-1.93-1.91-1.41 1.41 1.42 1.42L3 16.25V21h4.75l8.92-8.92 1.42 1.42 1.41-1.41-1.92-1.92 3.12-3.12a1 1 0 0 0 .01-1.42zM6.92 19L5 17.08l8.06-8.06 1.92 1.92L6.92 19z"/></svg> Sample</button>
+      <button data-action="resetBg" title="Back to white">Reset</button>
+    </div>
+    <p class="pp-note" id="sampleNote"></p>
+  </div>
+
+  <!-- ===== Settings panel ===== -->
+  <div id="settings" hidden>
+    <form id="settingsForm" autocomplete="off">
+      <h2>Dashboard settings <small>(this slide only)</small></h2>
+
+      <label class="full">Quickbase URL
+        <input name="url" type="url" required placeholder="https://yourrealm.quickbase.com/nav/app/…/action/dashboard?…" />
+      </label>
+
+      <fieldset>
+        <legend>Layout</legend>
+        <label class="full">Zoom behaves like
+          <select name="zoomMode">
+            <option value="browser">Browser zoom – charts &amp; tables reflow to fit (recommended)</option>
+            <option value="magnify">Magnify – fixed layout, scaled like a picture</option>
+          </select>
+        </label>
+        <label>Window width at 100% (px)
+          <input name="vw" type="number" min="320" max="6000" step="1" />
+        </label>
+        <label>Page height (magnify only)
+          <input name="vh" type="number" min="200" max="12000" step="1" />
+        </label>
+        <label>Scaling (magnify only)
+          <select name="fit">
+            <option value="width">Fit width</option>
+            <option value="contain">Fit whole area</option>
+            <option value="cover">Fill frame</option>
+            <option value="none">Fixed zoom</option>
+          </select>
+        </label>
+        <label>Zoom %
+          <input name="zoom" type="number" min="5" max="500" step="any" />
+        </label>
+        <p class="help full"><b>Browser zoom:</b> the box acts like a browser window that is <i>Window width</i> px wide at 100%. Zooming in works like Ctrl&nbsp;+ in a browser – the dashboard re-lays out, so charts and tables grow and refit the box. Scroll inside the dashboard as usual.<br><b>Magnify:</b> the dashboard is laid out at Window width × Page height and scaled to the box.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Crop (px of page)</legend>
+        <label>Left <input name="cl" type="number" min="0" step="1" /></label>
+        <label>Top <input name="ct" type="number" min="0" step="1" /></label>
+        <label>Right <input name="cr" type="number" min="0" step="1" /></label>
+        <label>Bottom <input name="cb" type="number" min="0" step="1" /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Live data</legend>
+        <label>Auto-refresh every (min, 0 = off)
+          <input name="refreshMin" type="number" min="0" max="1440" step="1" />
+        </label>
+        <label class="check"><input name="reloadOnShow" type="checkbox" /> Reload when the slideshow starts</label>
+        <label class="check"><input name="toolbarInShow" type="checkbox" /> Show toolbar during slideshow</label>
+        <label class="check"><input name="locked" type="checkbox" /> Lock (block clicks/scrolling inside dashboard)</label>
+      </fieldset>
+
+      <div class="buttons">
+        <button type="submit" class="primary">Save &amp; load</button>
+        <button type="button" data-action="closeSettings">Cancel</button>
+        <span class="grow"></span>
+        <button type="button" data-action="signin" title="Open a Quickbase sign-in window">Sign in to Quickbase…</button>
+        <button type="button" data-action="openExternal">Open in browser</button>
+      </div>
+
+      <details>
+        <summary>Troubleshooting</summary>
+        <ul>
+          <li><b>Blank frame or "refused to connect"</b> – your realm blocks framing. A Quickbase realm admin must turn off the security policy <i>Prevent embedding in iframes</i> (realm security policies in the Quickbase Admin Console).</li>
+          <li><b>Sign-in page appears / keeps asking to sign in</b> – click <i>Sign in to Quickbase…</i>, sign in, close that window. SSO login pages (Okta, Entra ID…) usually refuse to load inside frames, which is why sign-in happens in a separate window.</li>
+          <li><b>Signed in but frame still shows sign-in (PowerPoint on the web)</b> – the browser is blocking third-party cookies. Allow cookies for <code>[*.]quickbase.com</code> in your browser's site settings (Safari blocks these by default; use Edge or Chrome).</li>
+          <li><b>Settings lost</b> – settings are stored inside the .pptx. Save the presentation after configuring.</li>
+        </ul>
+      </details>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
