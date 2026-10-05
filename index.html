@@ -101,6 +101,14 @@
             <option value="magnify">Magnify – fixed layout, scaled like a picture</option>
           </select>
         </label>
+        <label class="full">Scaling method
+          <select name="renderer">
+            <option value="auto">Automatic (recommended)</option>
+            <option value="zoom">Native zoom – real browser zoom, keeps page mouse pointers</option>
+            <option value="transform">Transform – older method, use if content looks wrong</option>
+          </select>
+        </label>
+        <label class="check"><input name="sharp" type="checkbox" /> Sharp 1:1 pixels – window matches the box size (best for Excel and other pages you click or type in; ignores Window width)</label>
         <label>Window width at 100% (px)
           <input name="vw" type="number" min="320" max="6000" step="1" />
         </label>

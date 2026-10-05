@@ -44,7 +44,9 @@
     refreshMin: 0,
     reloadOnShow: true,
     toolbarInShow: false,
-    locked: false
+    locked: false,
+    sharp: false,            // browser mode: window = box size (1:1 pixels, sharpest)
+    renderer: "auto"         // auto | zoom | transform  (how the page is scaled)
   };
 
   // ---------- DOM ----------
@@ -93,6 +95,8 @@
     if (!r || typeof r.shapeId !== "string" || typeof r.slideId !== "string" ||
         !["left", "top", "width", "height"].every((k) => Number.isFinite(r[k]))) o.restore = null;
     if (typeof o.shapeId !== "string") o.shapeId = "";
+    o.sharp = !!o.sharp;
+    if (!["auto", "zoom", "transform"].includes(o.renderer)) o.renderer = "auto";
     return o;
   }
 
@@ -136,8 +140,10 @@
 
     if (state.zoomMode === "browser") {
       // Virtual browser window: vw/zoom wide, same aspect ratio as the box.
-      const pageW = state.vw / state.zoom;
-      const pageH = pageW * sh / sw;
+      // Sharp: lay out at the box's real pixel size, so 100% zoom = 1:1 pixels (no blur,
+      // thin lines like text carets stay visible). Otherwise use the fixed window width.
+      const pageW = Math.round((state.sharp ? sw : state.vw) / state.zoom);
+      const pageH = Math.round(pageW * sh / sw);
       const cw = Math.max(20, pageW - c.l - c.r);
       const ch = Math.max(20, pageH - c.t - c.b);
       const z = Math.min(sw / cw, sh / ch);   // crop area is enlarged to fill the box
@@ -184,7 +190,24 @@
     canvas.style.width = g.pageW + "px";
     canvas.style.height = g.pageH + "px";
     const tx = -(g.c.l + pan.x) * g.z, ty = -(g.c.t + pan.y) * g.z;
-    canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${g.z})`;
+    if (useNativeZoom()) {
+      // CSS zoom is passed into the embedded page as a real browser zoom level
+      // (its devicePixelRatio changes), exactly like Ctrl +/- in Edge. Unlike transform:
+      // scale() this keeps the page's own custom mouse pointers working (e.g. Excel's
+      // white cross over the cell grid) and lets it render text/canvas at full sharpness.
+      canvas.style.transform = "none";
+      canvas.style.zoom = String(g.z);
+      // left/top of a zoomed element are themselves multiplied by its zoom
+      canvas.style.left = -(g.c.l + pan.x) + "px";
+      canvas.style.top = -(g.c.t + pan.y) + "px";
+    } else {
+      canvas.style.zoom = "";
+      canvas.style.left = "0px"; canvas.style.top = "0px";
+      // Whole-pixel offsets, and no scale() at all when it is 1:1, keep rendering crisp.
+      canvas.style.transform = Math.abs(g.z - 1) < 0.001
+        ? `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`
+        : `translate(${Math.round(tx)}px, ${Math.round(ty)}px) scale(${g.z})`;
+    }
 
     const browser = state.zoomMode === "browser";
     zoomLabel.textContent = Math.round((browser ? state.zoom : g.z) * 100) + "%";
@@ -201,6 +224,16 @@
     $("btnPan").classList.toggle("active", mode === "pan");
     $("btnCrop").classList.toggle("active", mode === "crop");
     empty.hidden = !!state.url;
+  }
+
+  // Native CSS zoom on Chromium-based hosts (PowerPoint for Windows = WebView2, Edge, Chrome).
+  // Mac PowerPoint (Safari engine) and other browsers fall back to transform: scale().
+  const IS_CHROMIUM = /(Chrome|Chromium|Edg|EdgA|EdgiOS)\//.test(navigator.userAgent) &&
+    !!(window.CSS && CSS.supports && CSS.supports("zoom", "0.5"));
+  function useNativeZoom() {
+    if (state.renderer === "transform") return false;
+    if (state.renderer === "zoom") return true;
+    return IS_CHROMIUM;
   }
 
   function fitName(f) {
@@ -685,6 +718,8 @@
     f.reloadOnShow.checked = state.reloadOnShow;
     f.toolbarInShow.checked = state.toolbarInShow;
     f.locked.checked = state.locked;
+    f.sharp.checked = state.sharp;
+    f.renderer.value = state.renderer;
     settingsPanel.hidden = false;
     setTimeout(() => f.url.focus(), 0);
     enlarge("settings");
@@ -715,7 +750,9 @@
       refreshMin: f.refreshMin.value,
       reloadOnShow: f.reloadOnShow.checked,
       toolbarInShow: f.toolbarInShow.checked,
-      locked: f.locked.checked
+      locked: f.locked.checked,
+      sharp: f.sharp.checked,
+      renderer: f.renderer.value
     }));
     if (urlChanged || fitWas !== state.fit + state.zoomMode) state.pan = { x: 0, y: 0 };
     applyBodyFlags();
