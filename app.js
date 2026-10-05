@@ -36,6 +36,11 @@
     zoom: 1,
     crop: { l: 0, t: 0, r: 0, b: 0 },
     pan: { x: 0, y: 0 },
+    alignX: "center",        // left | center | right   (snap when content is smaller than the box)
+    alignY: "middle",        // top | middle | bottom
+    bg: "",                  // "" = white, else #rrggbb (picked or sampled)
+    shapeId: "",             // this add-in's shape id on the slide (learned on first enlarge)
+    restore: null,           // original shape rect while temporarily enlarged
     refreshMin: 0,
     reloadOnShow: true,
     toolbarInShow: false,
@@ -49,6 +54,7 @@
   const loading = $("loading"), loadingText = $("loadingText"), empty = $("empty");
   const zoomLabel = $("zoomLabel"), statusEl = $("status");
   const settingsPanel = $("settings"), form = $("settingsForm");
+  const posPanel = $("posPanel"), bgPick = $("bgPick"), toolbar = $("toolbar");
   let frame = $("qb");
 
   // ---------- State ----------
@@ -80,6 +86,13 @@
     if (o.crop.l + o.crop.r > o.vw - 20) { o.crop.l = 0; o.crop.r = 0; }
     if (o.crop.t + o.crop.b > o.vh - 20) { o.crop.t = 0; o.crop.b = 0; }
     o.refreshMin = clamp(num(o.refreshMin, 0), 0, 1440);
+    if (!["left", "center", "right"].includes(o.alignX)) o.alignX = "center";
+    if (!["top", "middle", "bottom"].includes(o.alignY)) o.alignY = "middle";
+    if (!/^#[0-9a-f]{6}$/i.test(o.bg || "")) o.bg = "";
+    const r = o.restore;
+    if (!r || typeof r.shapeId !== "string" || typeof r.slideId !== "string" ||
+        !["left", "top", "width", "height"].every((k) => Number.isFinite(r[k]))) o.restore = null;
+    if (typeof o.shapeId !== "string") o.shapeId = "";
     return o;
   }
 
@@ -111,6 +124,12 @@
   }
 
   // ---------- Geometry / rendering ----------
+  const AX = { left: 0, center: 0.5, right: 1 }, AY = { top: 0, middle: 0.5, bottom: 1 };
+  function place(g) {
+    g.left = Math.max(0, g.sw - g.clipW) * AX[state.alignX];
+    g.top = Math.max(0, g.sh - g.clipH) * AY[state.alignY];
+    return g;
+  }
   function computeGeometry(full) {
     const sw = Math.max(1, stage.clientWidth), sh = Math.max(1, stage.clientHeight);
     const c = full ? { l: 0, t: 0, r: 0, b: 0 } : state.crop;
@@ -125,8 +144,7 @@
       const g = { sw, sh, c, fit: "contain", pageW, pageH, cw, ch, z,
                   visW: cw, visH: ch, maxPanX: 0, maxPanY: 0 };
       g.clipW = cw * z; g.clipH = ch * z;
-      g.left = (sw - g.clipW) / 2; g.top = (sh - g.clipH) / 2;
-      return g;
+      return place(g);
     }
 
     const fit = full ? "contain" : state.fit;
@@ -145,9 +163,7 @@
                 visW, visH, maxPanX: cw - visW, maxPanY: ch - visH };
     const clipW = visW * z, clipH = visH * z;
     g.clipW = clipW; g.clipH = clipH;
-    g.left = clipW < sw ? (sw - clipW) / 2 : 0;
-    g.top = clipH < sh && fit === "contain" ? (sh - clipH) / 2 : 0;
-    return g;
+    return place(g);
   }
 
   function render() {
@@ -178,7 +194,9 @@
 
     document.body.classList.toggle("mode-pan", mode === "pan");
     document.body.classList.toggle("mode-crop", mode === "crop");
-    document.body.classList.toggle("toolbar-pinned", mode !== "none");
+    document.body.classList.toggle("toolbar-pinned", mode !== "none" || !posPanel.hidden || document.body.classList.contains("menu-open"));
+    document.documentElement.style.setProperty("--bg", state.bg || "#ffffff");
+    layoutToolbar();
     shield.hidden = !(mode !== "none" || state.locked);
     $("btnPan").classList.toggle("active", mode === "pan");
     $("btnCrop").classList.toggle("active", mode === "crop");
@@ -308,6 +326,8 @@
   function setMode(m) {
     mode = mode === m ? "none" : m;
     cropRect.hidden = true;
+    if (mode === "crop") enlarge("crop");
+    else maybeRestore("crop");
     if (mode === "pan") showHint("Drag to move · scroll to pan · Ctrl+scroll to zoom · Esc to finish");
     else if (mode === "crop") showHint("Drag a rectangle around the area to keep · Esc to cancel");
     else showHint("");
@@ -375,6 +395,7 @@
       cropRect.hidden = true;
       mode = "none"; showHint("");
       render();
+      maybeRestore("crop");
     }
     drag = null;
   }
@@ -416,8 +437,241 @@
   document.addEventListener("mousemove", pokeToolbar);
   $("toolbar").addEventListener("mouseenter", pokeToolbar);
 
+  // ---------- Responsive toolbar ----------
+  // The add-in can only draw inside its own box on the slide, so when the box is small the
+  // toolbar shrinks: full labels -> icons only -> a single ☰ button with a drop-down menu.
+  let tbKey = "";
+  function layoutToolbar() {
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    const key = sw + "x" + sh + state.zoomMode;
+    if (key === tbKey) return;
+    tbKey = key;
+    const b = document.body;
+    b.classList.remove("tb-full", "tb-compact", "tb-mini");
+    if (toolbar.offsetParent === null && getComputedStyle(toolbar).display === "none") {
+      b.classList.add(sw >= 600 ? "tb-full" : sw >= 340 ? "tb-compact" : "tb-mini");
+      tbKey = ""; // measure properly next time it is visible
+      return;
+    }
+    const fits = () => toolbar.offsetHeight <= 40 && toolbar.offsetHeight < sh * 0.45 && toolbar.scrollWidth <= sw;
+    b.classList.add("tb-full");
+    if (fits()) return;
+    b.classList.replace("tb-full", "tb-compact");
+    if (fits()) return;
+    b.classList.replace("tb-compact", "tb-mini");
+  }
+
+  function closeMenus() {
+    if (!posPanel.hidden) maybeRestore("position");
+    posPanel.hidden = true;
+    document.body.classList.remove("menu-open");
+    $("btnPos").classList.remove("active");
+  }
+
+  // ---------- Snap position & background ----------
+  function openPosPanel() {
+    const wasOpen = !posPanel.hidden;
+    closeMenus();
+    if (wasOpen) { render(); return; }
+    posPanel.querySelectorAll(".snapgrid button").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.x === state.alignX && btn.dataset.y === state.alignY);
+    });
+    bgPick.value = state.bg || "#ffffff";
+    const canSample = typeof window.EyeDropper === "function";
+    $("btnSample").hidden = !canSample;
+    $("sampleNote").textContent = canSample
+      ? "Eyedropper: click Sample, then click the dashboard's edge to match its colour."
+      : "Colour sampling isn't available in this version of PowerPoint – use the colour picker.";
+    posPanel.hidden = false;
+    $("btnPos").classList.add("active");
+    enlarge("position");
+    render();
+  }
+
+  function snap(el) {
+    state.alignX = el.dataset.x; state.alignY = el.dataset.y;
+    posPanel.querySelectorAll(".snapgrid button").forEach((b) => b.classList.toggle("active", b === el));
+    render(); saveState();
+  }
+
+  function toHex(c) {
+    if (/^#[0-9a-f]{6}$/i.test(c)) return c.toLowerCase();
+    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/i.exec(c || "");
+    return m ? "#" + [m[1], m[2], m[3]].map((v) => (+v).toString(16).padStart(2, "0")).join("") : "";
+  }
+
+  function setBg(hex) {
+    state.bg = toHex(hex) || "";
+    bgPick.value = state.bg || "#ffffff";
+    render(); saveState();
+  }
+
+  function sampleBg() {
+    if (typeof window.EyeDropper !== "function") return;
+    closeMenus(); render();
+    // EyeDropper samples the screen, so it can read the (cross-origin) dashboard's pixels
+    // when the user clicks – scripts can't read them directly.
+    new window.EyeDropper().open()
+      .then((r) => setBg(r.sRGBHex))
+      .catch(() => { /* cancelled */ });
+  }
+
+  bgPick.addEventListener("input", () => setBg(bgPick.value));
+
+  // ---------- Temporary enlarge while editing (PowerPoint shape API) ----------
+  // When the box is small, opening Settings / Position / Crop (or ☰) makes the add-in's own
+  // shape on the slide bigger, and puts it back afterwards. Needs PowerPointApi 1.5
+  // (current Microsoft 365 desktop & web); older versions just use the compact toolbar.
+  const SMALL_W = 680, SMALL_H = 380;      // CSS px: below this, auto-enlarge
+  const TARGET_W = 760, MIN_H = 330;       // CSS px to aim for when enlarged
+  let enlargeTrigger = null;
+  let resizeBusy = false;
+
+  function canResize() {
+    try {
+      return inOffice && !!window.PowerPoint && Office.context.requirements.isSetSupported("PowerPointApi", "1.5");
+    } catch (e) { return false; }
+  }
+  const isSmall = () => stage.clientWidth < SMALL_W || stage.clientHeight < SMALL_H;
+
+  const SHAPE_PROPS = "items/id,items/type,items/left,items/top,items/width,items/height";
+
+  /** Find this add-in's own shape: the selected content add-in, else by remembered id / only one / matching aspect. */
+  async function locateSelf(ctx) {
+    const slides = ctx.presentation.getSelectedSlides();
+    slides.load("items/id");
+    const sel = ctx.presentation.getSelectedShapes();
+    sel.load(SHAPE_PROPS);
+    await ctx.sync();
+    const slide = slides.items[0];
+    if (!slide) return null;
+    const isApp = (sh) => String(sh.type).toLowerCase() === "contentapp";
+    let shape = null;
+    const selApps = sel.items.filter(isApp);
+    if (selApps.length === 1) shape = selApps[0];
+    if (!shape) {
+      const all = slide.shapes;
+      all.load(SHAPE_PROPS);
+      await ctx.sync();
+      const apps = all.items.filter(isApp);
+      shape = apps.find((x) => x.id === state.shapeId) || (apps.length === 1 ? apps[0] : null);
+      if (!shape && apps.length > 1) {
+        const aspect = stage.clientWidth / Math.max(1, stage.clientHeight);
+        const ranked = apps
+          .map((x) => ({ x, d: Math.abs(x.width / x.height - aspect) / aspect }))
+          .sort((a, b) => a.d - b.d);
+        if (ranked[0].d < 0.02 && ranked[1].d > 0.05) shape = ranked[0].x;
+      }
+    }
+    return shape ? { slide, shape } : null;
+  }
+
+  async function slideSize(ctx) {
+    try {
+      if (Office.context.requirements.isSetSupported("PowerPointApi", "1.10")) {
+        const ps = ctx.presentation.pageSetup;
+        ps.load("slideWidth,slideHeight");
+        await ctx.sync();
+        if (ps.slideWidth > 0 && ps.slideHeight > 0) return { w: ps.slideWidth, h: ps.slideHeight };
+      }
+    } catch (e) { /* older API */ }
+    return { w: 960, h: 540 }; // standard 16:9 slide, in points
+  }
+
+  /** Returns true if the box was enlarged. */
+  async function enlarge(trigger, force) {
+    if (state.restore || resizeBusy || view === "read" || !canResize()) return !!state.restore;
+    if (!force && !isSmall()) return false;
+    resizeBusy = true;
+    let result = false;
+    try {
+      result = await PowerPoint.run(async (ctx) => {
+        const found = await locateSelf(ctx);
+        if (!found) return "notfound";
+        const { slide, shape } = found;
+        const size = await slideSize(ctx);
+        const pxPerPt = stage.clientWidth / shape.width;      // depends on PowerPoint's view zoom
+        const aspect = shape.width / shape.height;
+        let w = Math.max(shape.width, TARGET_W / pxPerPt);
+        let h = w / aspect;
+        if (h * pxPerPt < MIN_H) h = MIN_H / pxPerPt;          // very flat boxes get some height
+        const maxW = size.w * 0.96, maxH = size.h * 0.96;
+        if (w > maxW) { h = h * maxW / w; w = maxW; }
+        if (h > maxH) { w = w * maxH / h; h = maxH; }
+        w = Math.max(w, shape.width); h = Math.max(h, shape.height);
+        if (w < shape.width * 1.05 && h < shape.height * 1.05) return "nochange";
+        const cx = shape.left + shape.width / 2, cy = shape.top + shape.height / 2;
+        state.shapeId = shape.id;
+        state.restore = { slideId: slide.id, shapeId: shape.id,
+                          left: shape.left, top: shape.top, width: shape.width, height: shape.height };
+        shape.left = clamp(cx - w / 2, 0, Math.max(0, size.w - w));
+        shape.top = clamp(cy - h / 2, 0, Math.max(0, size.h - h));
+        shape.width = w;
+        shape.height = h;
+        await ctx.sync();
+        return true;
+      });
+    } catch (e) {
+      console.warn("Enlarge failed", e);
+      state.restore = null;
+      result = "error";
+    } finally {
+      resizeBusy = false;
+    }
+    if (result === true) {
+      enlargeTrigger = trigger;
+      saveState();
+      flashHint("Enlarged for editing – click ✓ Done to shrink back");
+    } else if (force) {
+      flashHint(result === "nochange"
+        ? "Already as big as the slide allows – zoom PowerPoint's view in for more room"
+        : "Couldn't resize the box automatically – drag its handles to make it bigger");
+    }
+    applyBodyFlags(); render();
+    return result === true;
+  }
+
+  /** Restore only if the box was enlarged by this trigger (Settings, Position, Crop). */
+  function maybeRestore(trigger) {
+    if (state.restore && enlargeTrigger === trigger) restoreSize();
+  }
+
+  async function restoreSize(onStartup) {
+    const r = state.restore;
+    if (!r || resizeBusy || !canResize()) return;
+    resizeBusy = true;
+    try {
+      await PowerPoint.run(async (ctx) => {
+        if (onStartup) {
+          // A copied slide carries these settings too – only resize if we are that shape.
+          const found = await locateSelf(ctx);
+          if (!found || found.shape.id !== r.shapeId) return;
+        }
+        const shape = ctx.presentation.slides.getItem(r.slideId).shapes.getItem(r.shapeId);
+        shape.left = r.left; shape.top = r.top; shape.width = r.width; shape.height = r.height;
+        await ctx.sync();
+      });
+    } catch (e) {
+      console.warn("Restore failed", e);
+    } finally {
+      resizeBusy = false;
+      state.restore = null;
+      enlargeTrigger = null;
+      saveState(); applyBodyFlags(); render();
+    }
+  }
+
+  let hintTimer = null;
+  function flashHint(text) {
+    if (mode !== "none") return; // keep pan/crop instructions visible
+    showHint(text);
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => { if (mode === "none") showHint(""); }, 4000);
+  }
+
   // ---------- Settings form ----------
   function openSettings() {
+    closeMenus();
     mode = "none"; showHint(""); render();
     const f = form.elements;
     f.url.value = state.url;
@@ -433,8 +687,9 @@
     f.locked.checked = state.locked;
     settingsPanel.hidden = false;
     setTimeout(() => f.url.focus(), 0);
+    enlarge("settings");
   }
-  function closeSettings() { settingsPanel.hidden = true; }
+  function closeSettings() { settingsPanel.hidden = true; maybeRestore("settings"); }
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -449,7 +704,7 @@
     const urlChanged = url !== state.url;
     const zoomInput = num(f.zoom.value, 100) / 100;
     const fitWas = state.fit + state.zoomMode;
-    state = normalize({
+    state = normalize(Object.assign({}, state, {
       url,
       vw: f.vw.value, vh: f.vh.value,
       fit: f.fit.value,
@@ -461,7 +716,7 @@
       reloadOnShow: f.reloadOnShow.checked,
       toolbarInShow: f.toolbarInShow.checked,
       locked: f.locked.checked
-    });
+    }));
     if (urlChanged || fitWas !== state.fit + state.zoomMode) state.pan = { x: 0, y: 0 };
     applyBodyFlags();
     saveState();
@@ -474,6 +729,8 @@
 
   function applyBodyFlags() {
     document.body.classList.toggle("toolbar-in-show", !!state.toolbarInShow);
+    document.body.classList.toggle("enlarged", !!state.restore);
+    document.body.classList.toggle("can-resize", canResize());
     document.body.classList.toggle("slideshow", view === "read");
   }
 
@@ -538,14 +795,49 @@
     settings: openSettings,
     closeSettings,
     signin: signIn,
-    openExternal
+    openExternal,
+    menu: () => {
+      const open = !document.body.classList.contains("menu-open");
+      closeMenus();
+      if (open && canResize()) {
+        // Prefer making the box big enough for the full toolbar; fall back to the drop-down.
+        enlarge("menu", true).then((ok) => {
+          if (!ok) { document.body.classList.add("menu-open"); render(); }
+        });
+        return;
+      }
+      document.body.classList.toggle("menu-open", open);
+      render();
+    },
+    enlarge: () => enlarge("manual", true),
+    done: () => restoreSize(),
+    position: openPosPanel,
+    snap,
+    sampleBg,
+    resetBg: () => setBg("")
   };
+  // Actions that keep the ☰ menu open (so you can click them repeatedly)
+  const KEEP_MENU = new Set(["enlarge", "zoomIn", "zoomOut", "zoomReset", "menu", "position", "snap", "resetBg"]);
 
   document.addEventListener("click", (e) => {
     const el = e.target.closest("[data-action]");
-    if (!el) return;
-    const fn = actions[el.dataset.action];
-    if (fn) { e.preventDefault(); fn(); }
+    if (!el) {
+      // click outside any control closes open pop-ups
+      if (!e.target.closest("#posPanel, #toolbar") && (!posPanel.hidden || document.body.classList.contains("menu-open"))) {
+        closeMenus(); render();
+      }
+      return;
+    }
+    const name = el.dataset.action;
+    const fn = actions[name];
+    if (fn) {
+      e.preventDefault();
+      if (document.body.classList.contains("menu-open") && !KEEP_MENU.has(name)) {
+        document.body.classList.remove("menu-open");
+      }
+      fn(el);
+      render();
+    }
   });
 
   document.addEventListener("keydown", (e) => {
@@ -557,7 +849,8 @@
     const k = e.key.toLowerCase();
     const map = { "+": "zoomIn", "=": "zoomIn", "-": "zoomOut", "_": "zoomOut", "0": "zoomReset",
                   w: "fitWidth", f: "fitAll", p: "pan", c: "crop", r: "reload" };
-    if (k === "escape") { if (mode !== "none") { mode = "none"; cropRect.hidden = true; showHint(""); render(); } return; }
+    if (k === "escape" && (!posPanel.hidden || document.body.classList.contains("menu-open"))) { closeMenus(); render(); return; }
+    if (k === "escape") { if (mode !== "none") { mode = "none"; cropRect.hidden = true; showHint(""); render(); maybeRestore("crop"); } return; }
     if (map[k] && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); actions[map[k]](); }
   });
 
@@ -576,6 +869,7 @@
     const prev = view;
     view = v === "read" ? "read" : "edit";
     applyBodyFlags();
+    if (view === "read" && state.restore) restoreSize();
     if (view === "read" && prev !== "read" && state.reloadOnShow && lastLoaded && Date.now() - lastLoaded > 5000) {
       loadDashboard();
     }
@@ -589,6 +883,8 @@
     scheduleRefresh();
     if (state.url) loadDashboard();
     // Expose for debugging / tests
+    // Left enlarged last time (e.g. PowerPoint closed mid-edit)? Put the box back.
+    if (state.restore) setTimeout(() => restoreSize(true), 1500);
     window.__qb = { get state() { return state; }, get geo() { return geo; }, render, setZoom, setFit, setMode };
   }
 
