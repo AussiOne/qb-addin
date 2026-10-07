@@ -52,6 +52,7 @@
     <button data-action="crop" id="btnCrop" title="Crop: drag a rectangle (C)">✂<span class="lbl"> Crop</span></button>
     <button data-action="uncrop" title="Remove crop">⊘<span class="lbl"> Uncrop</span></button>
     <button data-action="position" id="btnPos" title="Snap position &amp; background"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><rect x="1" y="1" width="4" height="4" rx=".6"/><rect x="6" y="1" width="4" height="4" rx=".6"/><rect x="11" y="1" width="4" height="4" rx=".6"/><rect x="1" y="6" width="4" height="4" rx=".6"/><rect x="6" y="6" width="4" height="4" rx=".6"/><rect x="11" y="6" width="4" height="4" rx=".6"/><rect x="1" y="11" width="4" height="4" rx=".6"/><rect x="6" y="11" width="4" height="4" rx=".6"/><rect x="11" y="11" width="4" height="4" rx=".6"/></g></svg><span class="lbl"> Position</span></button>
+    <button data-action="shot" id="btnShot" title="Snapshot: sharp picture for PDFs / switch back to live"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 4.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg><span class="lbl"> Snapshot</span></button>
     <button data-action="enlarge" id="btnEnlarge" title="Make the box bigger while you adjust it">⤢<span class="lbl"> Enlarge</span></button>
     <button data-action="done" id="btnDone" title="Shrink the box back to its original size">✓<span class="lbl"> Done</span></button>
     <span class="sep"></span>
@@ -83,6 +84,36 @@
     </div>
     <p class="pp-note" id="sampleNote"></p>
   </div>
+
+  <!-- ===== Snapshot popover (live view) ===== -->
+  <div id="shotPanel" hidden>
+    <div class="pp-title">Snapshot mode</div>
+    <p class="pp-note">Shows a sharp picture of this box on the slide (for PDFs and handouts). Every ⟳ reload or auto-refresh updates it.</p>
+    <div class="pp-grid">
+      <label for="shotDelay">Wait after load</label>
+      <span><input type="number" id="shotDelay" min="0" max="300" step="1" /> s</span>
+      <label class="pp-check"><input type="checkbox" id="shotHiRes" /> Extra sharp (enlarge while capturing)</label>
+    </div>
+    <div class="pp-col">
+      <button data-action="shotTake" id="shotTake"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 4.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg> Turn on snapshot mode</button>
+      <button data-action="shotOwn" id="shotOwn">Use my own picture instead</button>
+    </div>
+    <p class="pp-note warn" id="shotNote"></p>
+    <p class="pp-note">The first time in each PowerPoint session you'll be asked which screen to share – pick the one showing PowerPoint. Own picture: Insert › Screenshot › Screen Clipping, click this box, then <i>Use my own picture</i>.</p>
+  </div>
+
+  <!-- ===== Parked control bar (snapshot mode) – sits just off the slide's right edge ===== -->
+  <div id="chip">
+    <span class="chip-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 4.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg></span>
+    <span id="chipStatus">Snapshot</span>
+    <button data-action="reload" title="Update the snapshot now">⟳</button>
+    <button data-action="liveView" class="chip-live" title="Delete the picture and show the live dashboard">Live view</button>
+    <button data-action="settings" title="Settings">⚙</button>
+    <span id="chipNote"></span>
+  </div>
+
+  <!-- Solid colour shown for a moment during capture so the box can be found in the screenshot -->
+  <div id="snapMarker"></div>
 
   <!-- ===== Settings panel ===== -->
   <div id="settings" hidden>
@@ -145,6 +176,15 @@
         <label class="check"><input name="reloadOnShow" type="checkbox" /> Reload when the slideshow starts</label>
         <label class="check"><input name="toolbarInShow" type="checkbox" /> Show toolbar during slideshow</label>
         <label class="check"><input name="locked" type="checkbox" /> Lock (block clicks/scrolling inside dashboard)</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Snapshot mode (sharp picture for PDFs)</legend>
+        <label>Wait after load before capture (s)
+          <input name="snapDelay" type="number" min="0" max="300" step="1" />
+        </label>
+        <label class="check"><input name="snapHiRes" type="checkbox" /> Extra sharp – enlarge the box while capturing</label>
+        <p class="help full">Turn on with the camera button. Complex dashboards may need a longer wait so every chart has finished drawing. Hover pop-ups are blocked during the wait.</p>
       </fieldset>
 
       <div class="buttons">

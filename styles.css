@@ -194,3 +194,53 @@ body.enlarged #btnDone:hover { background: #15803d; }
 body.tb-full.enlarged #toolbar #btnDone .lbl,
 body.tb-compact.enlarged #toolbar #btnDone .lbl { display: inline; }
 body.enlarged #toolbar { transform: translateY(0); opacity: 1; }
+
+/* ---------- Snapshot ---------- */
+#btnShot { display: none; }
+body.can-snapshot #btnShot { display: inline-block; }
+body.tb-full #toolbar #btnShot .lbl { display: inline; }
+#shotPanel {
+  position: absolute; z-index: 15; top: 44px; left: 0; right: 0; margin: 0 auto; width: 250px;
+  max-height: calc(100% - 50px); overflow-y: auto;
+  background: var(--tb-bg); color: var(--tb-fg); border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); font-size: 12px;
+}
+body.tb-compact #shotPanel { top: 34px; }
+body.tb-mini #shotPanel { top: 4px; max-height: calc(100% - 8px); width: min(250px, calc(100% - 8px)); }
+.pp-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; margin: 4px 0 8px; }
+.pp-grid input[type="number"] { width: 56px; padding: 2px 4px; font-size: 12px; border-radius: 4px; border: 0; }
+.pp-grid label { color: inherit; font-size: 11.5px; }
+.pp-check { grid-column: 1 / -1; display: flex; flex-direction: row; align-items: center; gap: 5px; color: inherit; font-size: 11.5px; }
+.pp-col { display: flex; flex-direction: column; gap: 4px; }
+.pp-col button {
+  background: rgba(255, 255, 255, 0.12); color: inherit; border: 0; border-radius: 4px;
+  padding: 6px 8px; font-size: 12px; cursor: pointer; text-align: left;
+}
+.pp-col button:hover { background: rgba(255, 255, 255, 0.24); }
+#shotTake { background: var(--accent); }
+.pp-note.warn { color: #fbbf24; }
+
+/* Parked control bar */
+#chip {
+  display: none; position: absolute; inset: 0; z-index: 40; align-items: center; gap: 4px;
+  padding: 0 6px; background: #1f2937; color: #f9fafb; font-size: 12px; white-space: nowrap; overflow: hidden;
+}
+body.parked #chip { display: flex; }
+body.parked #toolbar, body.parked #menuBtn, body.parked #hotzone, body.parked #hint { display: none !important; }
+#chip .chip-ico { color: #fbbf24; display: inline-flex; }
+#chipStatus { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: #e5e7eb; }
+#chip button {
+  background: rgba(255, 255, 255, 0.12); color: inherit; border: 0; border-radius: 4px;
+  padding: 2px 7px; font: inherit; cursor: pointer; flex: 0 0 auto;
+}
+#chip button:hover { background: rgba(255, 255, 255, 0.25); }
+#chip .chip-live { background: #16a34a; }
+#chipNote { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #fbbf24; font-size: 11px; }
+
+/* During capture: hide all add-in UI; while "marking", fill the box with the marker colour */
+#snapMarker { display: none; position: fixed; inset: 0; z-index: 100; background: rgb(255, 0, 255); }
+body.marking #snapMarker { display: block; }
+body.capturing #toolbar, body.capturing #menuBtn, body.capturing #hint, body.capturing #hotzone,
+body.capturing #posPanel, body.capturing #shotPanel, body.capturing #loading, body.capturing #chip { display: none !important; }
+body.busy #stage, body.busy #stage * { cursor: progress; }
+#chip.has-note #chipStatus { display: none; }

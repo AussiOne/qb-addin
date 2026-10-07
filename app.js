@@ -46,7 +46,12 @@
     toolbarInShow: false,
     locked: false,
     sharp: false,            // browser mode: window = box size (1:1 pixels, sharpest)
-    renderer: "auto"         // auto | zoom | transform  (how the page is scaled)
+    renderer: "auto",        // auto | zoom | transform  (how the page is scaled)
+    snap: null,              // {pictureId, home, takenAt} while the snapshot picture is on the slide
+    snapMode: false,         // true = picture on the slide, live box parked beside it
+    snapDelay: 8,            // seconds to wait after the dashboard loads before capturing
+    snapHiRes: true,         // enlarge the box while capturing for a sharper picture
+    slideId: ""              // slide this box was last found on
   };
 
   // ---------- DOM ----------
@@ -57,6 +62,7 @@
   const zoomLabel = $("zoomLabel"), statusEl = $("status");
   const settingsPanel = $("settings"), form = $("settingsForm");
   const posPanel = $("posPanel"), bgPick = $("bgPick"), toolbar = $("toolbar");
+  const shotPanel = $("shotPanel");
   let frame = $("qb");
 
   // ---------- State ----------
@@ -97,6 +103,12 @@
     if (typeof o.shapeId !== "string") o.shapeId = "";
     o.sharp = !!o.sharp;
     if (!["auto", "zoom", "transform"].includes(o.renderer)) o.renderer = "auto";
+    const sn = o.snap;
+    if (!sn || typeof sn.pictureId !== "string" || !sn.home) o.snap = null;
+    o.snapMode = !!o.snapMode;
+    o.snapDelay = clamp(num(o.snapDelay, 8), 0, 300);
+    o.snapHiRes = o.snapHiRes !== false;
+    if (typeof o.slideId !== "string") o.slideId = "";
     return o;
   }
 
@@ -217,10 +229,10 @@
 
     document.body.classList.toggle("mode-pan", mode === "pan");
     document.body.classList.toggle("mode-crop", mode === "crop");
-    document.body.classList.toggle("toolbar-pinned", mode !== "none" || !posPanel.hidden || document.body.classList.contains("menu-open"));
+    document.body.classList.toggle("toolbar-pinned", mode !== "none" || !posPanel.hidden || !shotPanel.hidden || document.body.classList.contains("menu-open"));
     document.documentElement.style.setProperty("--bg", state.bg || "#ffffff");
     layoutToolbar();
-    shield.hidden = !(mode !== "none" || state.locked);
+    shield.hidden = !(mode !== "none" || state.locked || hoverGuard);
     $("btnPan").classList.toggle("active", mode === "pan");
     $("btnCrop").classList.toggle("active", mode === "crop");
     empty.hidden = !!state.url;
@@ -300,7 +312,16 @@
     render();
   }
 
+  let loadWaiters = [];
+  function waitForLoad(timeoutMs) {
+    return new Promise((res) => {
+      const t = setTimeout(() => res(false), timeoutMs);
+      loadWaiters.push(() => { clearTimeout(t); res(true); });
+    });
+  }
+
   function loaded() {
+    const w = loadWaiters; loadWaiters = []; w.forEach((f) => f());
     clearTimeout(slowTimer);
     loading.hidden = true;
     lastLoaded = Date.now();
@@ -312,7 +333,7 @@
 
   function scheduleRefresh() {
     clearInterval(refreshTimer);
-    if (state.refreshMin > 0) refreshTimer = setInterval(loadDashboard, state.refreshMin * 60000);
+    if (state.refreshMin > 0) refreshTimer = setInterval(() => (state.snapMode ? snapCycle(false) : loadDashboard()), state.refreshMin * 60000);
   }
 
   // ---------- Zoom ----------
@@ -497,6 +518,9 @@
   function closeMenus() {
     if (!posPanel.hidden) maybeRestore("position");
     posPanel.hidden = true;
+    if (!shotPanel.hidden) maybeRestore("shot");
+    shotPanel.hidden = true;
+    $("btnShot").classList.remove("active");
     document.body.classList.remove("menu-open");
     $("btnPos").classList.remove("active");
   }
@@ -569,8 +593,10 @@
 
   const SHAPE_PROPS = "items/id,items/type,items/left,items/top,items/width,items/height";
 
-  /** Find this add-in's own shape: the selected content add-in, else by remembered id / only one / matching aspect. */
-  async function locateSelf(ctx) {
+  /** Find this add-in's own shape on the current slide.
+   *  Known ids (learned earlier) are used first. strict = only accept the known shape, never guess
+   *  (used by automatic, timer-driven actions so we never move another box by mistake). */
+  async function locateSelf(ctx, strict) {
     const slides = ctx.presentation.getSelectedSlides();
     slides.load("items/id");
     const sel = ctx.presentation.getSelectedShapes();
@@ -579,23 +605,27 @@
     const slide = slides.items[0];
     if (!slide) return null;
     const isApp = (sh) => String(sh.type).toLowerCase() === "contentapp";
+    const all = slide.shapes;
+    all.load(SHAPE_PROPS);
+    await ctx.sync();
+    const apps = all.items.filter(isApp);
+    if (state.shapeId && state.slideId === slide.id) {
+      const me = apps.find((x) => x.id === state.shapeId);
+      if (me) return { slide, shape: me };
+    }
+    if (strict) return null;
     let shape = null;
     const selApps = sel.items.filter(isApp);
-    if (selApps.length === 1) shape = selApps[0];
-    if (!shape) {
-      const all = slide.shapes;
-      all.load(SHAPE_PROPS);
-      await ctx.sync();
-      const apps = all.items.filter(isApp);
-      shape = apps.find((x) => x.id === state.shapeId) || (apps.length === 1 ? apps[0] : null);
-      if (!shape && apps.length > 1) {
-        const aspect = stage.clientWidth / Math.max(1, stage.clientHeight);
-        const ranked = apps
-          .map((x) => ({ x, d: Math.abs(x.width / x.height - aspect) / aspect }))
-          .sort((a, b) => a.d - b.d);
-        if (ranked[0].d < 0.02 && ranked[1].d > 0.05) shape = ranked[0].x;
-      }
+    if (selApps.length === 1) shape = apps.find((x) => x.id === selApps[0].id) || selApps[0];
+    if (!shape) shape = apps.length === 1 ? apps[0] : null;
+    if (!shape && apps.length > 1) {
+      const aspect = stage.clientWidth / Math.max(1, stage.clientHeight);
+      const ranked = apps
+        .map((x) => ({ x, d: Math.abs(x.width / x.height - aspect) / aspect }))
+        .sort((a, b) => a.d - b.d);
+      if (ranked[0].d < 0.02 && ranked[1].d > 0.05) shape = ranked[0].x;
     }
+    if (shape) { state.shapeId = shape.id; state.slideId = slide.id; }
     return shape ? { slide, shape } : null;
   }
 
@@ -612,14 +642,14 @@
   }
 
   /** Returns true if the box was enlarged. */
-  async function enlarge(trigger, force) {
+  async function enlarge(trigger, force, strict) {
     if (state.restore || resizeBusy || view === "read" || !canResize()) return !!state.restore;
     if (!force && !isSmall()) return false;
     resizeBusy = true;
     let result = false;
     try {
       result = await PowerPoint.run(async (ctx) => {
-        const found = await locateSelf(ctx);
+        const found = await locateSelf(ctx, strict);
         if (!found) return "notfound";
         const { slide, shape } = found;
         const size = await slideSize(ctx);
@@ -677,7 +707,7 @@
       await PowerPoint.run(async (ctx) => {
         if (onStartup) {
           // A copied slide carries these settings too – only resize if we are that shape.
-          const found = await locateSelf(ctx);
+          const found = await locateSelf(ctx, true);
           if (!found || found.shape.id !== r.shapeId) return;
         }
         const shape = ctx.presentation.slides.getItem(r.slideId).shapes.getItem(r.shapeId);
@@ -702,6 +732,304 @@
     hintTimer = setTimeout(() => { if (mode === "none") showHint(""); }, 4000);
   }
 
+  // ---------- Snapshot mode – a sharp picture on the slide for PDFs ----------
+  // PowerPoint exports add-ins to PDF as a low-resolution snapshot. In snapshot mode a real
+  // picture sits on the slide instead, and this box waits just off the slide's right edge as a
+  // small control bar ("chip"); off-slide objects never appear in PDFs or the slideshow.
+  // Each update (⟳, auto-refresh, turning the mode on):
+  //   bring the box back over the picture's spot → enlarge (sharper) → reload → wait for the
+  //   page, then the user's delay → block hover (no tooltips) → screen-capture → crop →
+  //   replace the picture → park the box again.
+  // Screen capture needs one click per box per PowerPoint session (browser rule); after that
+  // updates run on their own while this slide is the one being shown.
+  const SNAP_NAME = "Quickbase snapshot";
+  const CHIP_W = 230, CHIP_H = 30;         // points
+  const HOVER_GUARD_MS = 1500;
+  let snapBusy = false;
+  let capStream = null, capVideo = null;
+  let hoverGuard = false;
+
+  function canSnapshot() {
+    try {
+      return canResize() && Office.context.requirements.isSetSupported("ImageCoercion", "1.1");
+    } catch (e) { return false; }
+  }
+  const canCapture = () => !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  const streamAlive = () => !!capStream && capStream.getVideoTracks().some((t) => t.readyState === "live");
+  const parked = () => state.snapMode && !!state.snap && !snapBusy;
+  const rectOf = (x) => ({ left: x.left, top: x.top, width: x.width, height: x.height });
+  const setRect = (x, r) => { x.left = r.left; x.top = r.top; x.width = r.width; x.height = r.height; };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const frames = (n) => new Promise((r) => { const f = () => (--n <= 0 ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); });
+
+  /** Ask for screen capture once; the stream is kept open and reused for every update. */
+  async function openStream() {
+    capStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: "never", frameRate: 5, width: { ideal: 7680 }, height: { ideal: 4320 } },
+      audio: false, selfBrowserSurface: "include", surfaceSwitching: "exclude"
+    });
+    capStream.getVideoTracks().forEach((t) => t.addEventListener("ended", () => {
+      capStream = null; capVideo = null;
+      chipNote("Screen sharing stopped – click ⟳ to allow it again");
+      applyBodyFlags(); render();
+    }));
+    capVideo = document.createElement("video");
+    capVideo.muted = true; capVideo.srcObject = capStream;
+    await capVideo.play();
+    applyBodyFlags();
+  }
+
+  function grabFrame() {
+    const c = document.createElement("canvas");
+    c.width = capVideo.videoWidth; c.height = capVideo.videoHeight;
+    c.getContext("2d", { willReadFrequently: true }).drawImage(capVideo, 0, 0);
+    return c;
+  }
+
+  /** Bounding box of the magenta marker in a captured frame (physical pixels). */
+  function findMarker(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const d = canvas.getContext("2d").getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1, n = 0;
+    const step = 2;
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const i = (y * w + x) * 4;
+        if (d[i] > 200 && d[i + 1] < 70 && d[i + 2] > 200) {
+          n++;
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (n < 100) return null;
+    const box = { x: x0, y: y0, w: x1 - x0 + step, h: y1 - y0 + step };
+    return (n * step * step) / (box.w * box.h) > 0.7 ? box : null;
+  }
+
+  /** Capture just this box (UI hidden) and return it as base64 PNG. */
+  async function captureBox() {
+    document.body.classList.add("capturing", "marking");
+    await frames(3); await sleep(350);
+    const a = grabFrame();
+    document.body.classList.remove("marking");
+    await frames(3); await sleep(450);
+    const b = grabFrame();
+    document.body.classList.remove("capturing");
+    const box = findMarker(a);
+    if (!box) throw new Error("nobox");
+    const want = stage.clientWidth / Math.max(1, stage.clientHeight);
+    if (Math.abs(box.w / box.h - want) / want > 0.04) throw new Error("partial");
+    const inset = 2;
+    const out = document.createElement("canvas");
+    out.width = box.w - inset * 2; out.height = box.h - inset * 2;
+    out.getContext("2d").drawImage(b, box.x + inset, box.y + inset, out.width, out.height, 0, 0, out.width, out.height);
+    return { base64: out.toDataURL("image/png").split(",")[1], w: out.width, h: out.height };
+  }
+
+  function insertImage(base64, rect) {
+    return new Promise((resolve, reject) => {
+      Office.context.document.setSelectedDataAsync(base64, {
+        coercionType: Office.CoercionType.Image,
+        imageLeft: rect.left, imageTop: rect.top, imageWidth: rect.width, imageHeight: rect.height
+      }, (r) => (r.status === Office.AsyncResultStatus.Succeeded ? resolve() : reject(r.error)));
+    });
+  }
+
+  async function slideShapes(ctx, slide) {
+    const all = slide.shapes;
+    all.load(SHAPE_PROPS + ",items/name");
+    await ctx.sync();
+    return all.items;
+  }
+
+  function chipRect(size, home) {
+    return { left: size.w + 12, top: clamp(home.top, 0, Math.max(0, size.h - CHIP_H)), width: CHIP_W, height: CHIP_H };
+  }
+  const picName = () => SNAP_NAME + " (" + (state.url ? new URL(state.url).hostname : "dashboard") + ")";
+
+  /**
+   * Take / update the snapshot. gesture = started by a click (may ask for screen capture and
+   * may learn which box is ours); otherwise only runs if everything is already set up and this
+   * box is on the slide being shown.
+   */
+  async function snapCycle(gesture, ownPicture) {
+    if (snapBusy || view === "read") return;
+    if (!canSnapshot()) { flashHint("Snapshots need a current Microsoft 365 PowerPoint"); return; }
+    if (!ownPicture && !streamAlive()) {
+      if (!gesture) { chipNote("Click ⟳ to update the snapshot"); return; }
+      if (!canCapture()) { openShotPanel("Screen capture isn't available here – use “Use my own picture”."); return; }
+      try { await openStream(); }            // first await: still counts as the click
+      catch (e) {
+        openShotPanel(e && e.name === "NotAllowedError"
+          ? "Screen capture was cancelled or isn't allowed here. Try again, or use “Use my own picture”."
+          : "Screen capture failed (" + (e && e.name || e) + "). Use “Use my own picture”.");
+        return;
+      }
+    }
+    if (state.restore && enlargeTrigger === "shot") enlargeTrigger = "snapshot"; // don't shrink mid-click
+    closeMenus();
+    snapBusy = true;
+    document.body.classList.add("busy");
+    applyBodyFlags(); render();
+    let home = null, oldPicId = state.snap ? state.snap.pictureId : null;
+    try {
+      if (state.restore) await restoreSize();   // start from the box's real size and spot
+      // 1. Bring the box back to the picture's spot and move the old picture aside.
+      await PowerPoint.run(async (ctx) => {
+        const found = await locateSelf(ctx, !gesture);
+        if (!found) throw new Error(gesture ? "notfound" : "notshown");
+        const { slide, shape } = found;
+        const size = await slideSize(ctx);
+        home = state.snap ? state.snap.home : rectOf(shape);
+        if (oldPicId) {
+          const pic = (await slideShapes(ctx, slide)).find((x) => x.id === oldPicId);
+          if (pic) { home = rectOf(pic); pic.left = size.w + CHIP_W + 40; } else oldPicId = null;
+        }
+        setRect(shape, home);
+        await ctx.sync();
+      });
+      if (ownPicture) {
+        await PowerPoint.run(async (ctx) => {
+          const { slide, shape } = await locateSelf(ctx, true);
+          const shapes = await slideShapes(ctx, slide);
+          const isPic = (x) => String(x.type).toLowerCase() === "image";
+          const pic = shapes.filter((x) => isPic(x) && x.id !== oldPicId && !String(x.name || "").startsWith(SNAP_NAME)).pop();
+          if (!pic) throw new Error("nopicture");
+          setRect(pic, home); pic.name = picName();
+          if (oldPicId) { const old = shapes.find((x) => x.id === oldPicId); if (old) old.delete(); }
+          setRect(shape, chipRect(await slideSize(ctx), home));
+          await ctx.sync();
+          state.snap = { pictureId: pic.id, home, takenAt: Date.now() };
+        });
+        state.snapMode = true;
+        flashHint("Your picture is now the snapshot");
+        return;
+      }
+      // 2. Sharper capture: enlarge (not in Sharp mode, where the layout follows the box size).
+      if (state.snapHiRes && !state.sharp) await enlarge("snapshot", true, true);
+      // 3. Reload, wait for the page and then the user's delay, with hover blocked.
+      hoverGuard = true; render();
+      const waiter = waitForLoad(90000);
+      loadDashboard();
+      await waiter;
+      const total = Math.max(state.snapDelay, HOVER_GUARD_MS / 1000);
+      for (let left = Math.ceil(total); left > 0; left--) {
+        showHint(`Snapshot in ${left}s…`);
+        await sleep(Math.min(1000, total * 1000));
+      }
+      showHint("");
+      // 4. Capture.
+      const shot = await captureBox();
+      if (state.restore) await restoreSize();
+      // 5. Replace the picture and park the box.
+      await PowerPoint.run(async (ctx) => {
+        const { slide, shape } = await locateSelf(ctx, true);
+        const before = await slideShapes(ctx, slide);
+        const ids = new Set(before.map((x) => x.id));
+        await insertImage(shot.base64, home);
+        const after = await slideShapes(ctx, slide);
+        const pic = after.filter((x) => !ids.has(x.id)).pop();
+        if (!pic) throw new Error("insertfailed");
+        pic.name = picName();
+        if (oldPicId) { const old = after.find((x) => x.id === oldPicId); if (old) old.delete(); }
+        const me = after.find((x) => x.id === shape.id) || shape;
+        setRect(me, chipRect(await slideSize(ctx), home));
+        await ctx.sync();
+        state.snap = { pictureId: pic.id, home, takenAt: Date.now() };
+      });
+      state.snapMode = true;
+      chipNote("");
+      flashHint(`Snapshot updated (${shot.w}×${shot.h} px)`);
+    } catch (e) {
+      console.warn("Snapshot failed", e);
+      document.body.classList.remove("capturing", "marking");
+      if (state.restore) await restoreSize();
+      // Put things back the way they were.
+      if (home && oldPicId) {
+        try {
+          await PowerPoint.run(async (ctx) => {
+            const found = await locateSelf(ctx, true);
+            if (!found) return;
+            const shapes = await slideShapes(ctx, found.slide);
+            const old = shapes.find((x) => x.id === oldPicId);
+            if (old) setRect(old, home);
+            setRect(found.shape, chipRect(await slideSize(ctx), home));
+            await ctx.sync();
+          });
+        } catch (e2) { /* ignore */ }
+      }
+      const msg = {
+        notshown: "",   // automatic update while another slide is shown – just skip
+        nobox: "Couldn't find the box in the capture – share the screen or PowerPoint window that shows it.",
+        partial: "Part of the box was hidden or off screen – make the whole slide visible, then click ⟳.",
+        nopicture: "No picture found – insert one first (Insert › Screenshot › Screen Clipping).",
+        notfound: "Couldn't identify this box – click its border to select it, then try again."
+      }[e && e.message];
+      if (msg !== "") { if (state.snapMode) chipNote(msg || "Snapshot failed – " + (e && e.message || e)); else openShotPanel(msg || "Snapshot failed – " + (e && e.message || e)); }
+    } finally {
+      hoverGuard = false;
+      snapBusy = false;
+      document.body.classList.remove("busy");
+      showHint("");
+      saveState(); applyBodyFlags(); render();
+    }
+  }
+
+  /** Live view: delete the picture and put the live box where the picture was. */
+  async function goLive() {
+    if (snapBusy) return;
+    try {
+      await PowerPoint.run(async (ctx) => {
+        const found = await locateSelf(ctx, false);
+        if (!found) throw new Error("notfound");
+        const shapes = await slideShapes(ctx, found.slide);
+        const pic = state.snap && shapes.find((x) => x.id === state.snap.pictureId);
+        const home = pic ? rectOf(pic) : (state.snap ? state.snap.home : rectOf(found.shape));
+        if (pic) pic.delete();
+        setRect(found.shape, home);
+        await ctx.sync();
+      });
+    } catch (e) {
+      console.warn("Live view failed", e);
+      flashHint("Couldn't move the box back automatically – drag it onto the slide");
+    }
+    state.snap = null; state.snapMode = false;
+    chipNote("");
+    saveState(); applyBodyFlags(); render();
+    loadDashboard();
+  }
+
+  function chipNote(text) {
+    $("chipNote").textContent = text || "";
+    $("chipNote").title = text || "";
+    $("chip").classList.toggle("has-note", !!text);
+  }
+  function chipStatus() {
+    if (!state.snap) return "Snapshot";
+    const t = new Date(state.snap.takenAt);
+    const sameDay = t.toDateString() === new Date().toDateString();
+    return "Snapshot " + (sameDay ? t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                  : t.toLocaleDateString([], { month: "short", day: "numeric" }));
+  }
+
+  function openShotPanel(note) {
+    const wasOpen = !shotPanel.hidden && !note;
+    closeMenus();
+    if (wasOpen) { render(); return; }
+    $("shotDelay").value = state.snapDelay;
+    $("shotHiRes").checked = state.snapHiRes;
+    $("shotNote").textContent = note || "";
+    $("shotNote").classList.toggle("warn", !!note);
+    shotPanel.hidden = false;
+    $("btnShot").classList.add("active");
+    render();
+    enlarge("shot");
+  }
+  $("shotDelay").addEventListener("change", () => { state.snapDelay = clamp(num($("shotDelay").value, 8), 0, 300); saveState(); });
+  $("shotHiRes").addEventListener("change", () => { state.snapHiRes = $("shotHiRes").checked; saveState(); });
+
   // ---------- Settings form ----------
   function openSettings() {
     closeMenus();
@@ -715,6 +1043,8 @@
     f.cl.value = state.crop.l; f.ct.value = state.crop.t;
     f.cr.value = state.crop.r; f.cb.value = state.crop.b;
     f.refreshMin.value = state.refreshMin;
+    f.snapDelay.value = state.snapDelay;
+    f.snapHiRes.checked = state.snapHiRes;
     f.reloadOnShow.checked = state.reloadOnShow;
     f.toolbarInShow.checked = state.toolbarInShow;
     f.locked.checked = state.locked;
@@ -748,6 +1078,8 @@
       crop: { l: f.cl.value, t: f.ct.value, r: f.cr.value, b: f.cb.value },
       pan: state.pan,
       refreshMin: f.refreshMin.value,
+      snapDelay: f.snapDelay.value,
+      snapHiRes: f.snapHiRes.checked,
       reloadOnShow: f.reloadOnShow.checked,
       toolbarInShow: f.toolbarInShow.checked,
       locked: f.locked.checked,
@@ -760,7 +1092,8 @@
     closeSettings();
     scheduleRefresh();
     if (urlChanged) { frame.removeAttribute("src"); }
-    loadDashboard();
+    if (state.snapMode) setTimeout(() => snapCycle(true), 900);   // update the picture with the new settings
+    else loadDashboard();
   });
   form.elements.url.addEventListener("input", () => form.elements.url.setCustomValidity(""));
 
@@ -768,6 +1101,11 @@
     document.body.classList.toggle("toolbar-in-show", !!state.toolbarInShow);
     document.body.classList.toggle("enlarged", !!state.restore);
     document.body.classList.toggle("can-resize", canResize());
+    document.body.classList.toggle("can-snapshot", canSnapshot());
+    document.body.classList.toggle("parked", parked());
+    document.body.classList.toggle("snap-mode", !!state.snapMode);
+    document.body.classList.toggle("stream-on", streamAlive());
+    $("chipStatus").textContent = chipStatus();
     document.body.classList.toggle("slideshow", view === "read");
   }
 
@@ -828,7 +1166,7 @@
     pan: () => { if (state.zoomMode === "magnify") setMode("pan"); },
     crop: () => setMode("crop"),
     uncrop: () => { state.crop = { l: 0, t: 0, r: 0, b: 0 }; state.pan = { x: 0, y: 0 }; render(); saveState(); },
-    reload: () => loadDashboard(),
+    reload: () => (state.snapMode ? snapCycle(true) : loadDashboard()),
     settings: openSettings,
     closeSettings,
     signin: signIn,
@@ -851,7 +1189,11 @@
     position: openPosPanel,
     snap,
     sampleBg,
-    resetBg: () => setBg("")
+    resetBg: () => setBg(""),
+    shot: () => openShotPanel(),
+    shotTake: () => snapCycle(true),
+    shotOwn: () => snapCycle(true, true),
+    liveView: () => goLive()
   };
   // Actions that keep the ☰ menu open (so you can click them repeatedly)
   const KEEP_MENU = new Set(["enlarge", "zoomIn", "zoomOut", "zoomReset", "menu", "position", "snap", "resetBg"]);
@@ -860,7 +1202,7 @@
     const el = e.target.closest("[data-action]");
     if (!el) {
       // click outside any control closes open pop-ups
-      if (!e.target.closest("#posPanel, #toolbar") && (!posPanel.hidden || document.body.classList.contains("menu-open"))) {
+      if (!e.target.closest("#posPanel, #shotPanel, #toolbar") && (!posPanel.hidden || !shotPanel.hidden || document.body.classList.contains("menu-open"))) {
         closeMenus(); render();
       }
       return;
@@ -886,7 +1228,7 @@
     const k = e.key.toLowerCase();
     const map = { "+": "zoomIn", "=": "zoomIn", "-": "zoomOut", "_": "zoomOut", "0": "zoomReset",
                   w: "fitWidth", f: "fitAll", p: "pan", c: "crop", r: "reload" };
-    if (k === "escape" && (!posPanel.hidden || document.body.classList.contains("menu-open"))) { closeMenus(); render(); return; }
+    if (k === "escape" && (!posPanel.hidden || !shotPanel.hidden || document.body.classList.contains("menu-open"))) { closeMenus(); render(); return; }
     if (k === "escape") { if (mode !== "none") { mode = "none"; cropRect.hidden = true; showHint(""); render(); maybeRestore("crop"); } return; }
     if (map[k] && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); actions[map[k]](); }
   });
@@ -918,11 +1260,11 @@
     applyBodyFlags();
     render();
     scheduleRefresh();
-    if (state.url) loadDashboard();
+    if (state.url && !parked()) loadDashboard();   // parked: loads when the snapshot updates
     // Expose for debugging / tests
     // Left enlarged last time (e.g. PowerPoint closed mid-edit)? Put the box back.
     if (state.restore) setTimeout(() => restoreSize(true), 1500);
-    window.__qb = { get state() { return state; }, get geo() { return geo; }, render, setZoom, setFit, setMode };
+    window.__qb = { get state() { return state; }, get geo() { return geo; }, render, setZoom, setFit, setMode, snapCycle };
   }
 
   function bootOffice() {
