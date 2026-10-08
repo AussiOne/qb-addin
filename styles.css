@@ -244,3 +244,11 @@ body.capturing #toolbar, body.capturing #menuBtn, body.capturing #hint, body.cap
 body.capturing #posPanel, body.capturing #shotPanel, body.capturing #loading, body.capturing #chip { display: none !important; }
 body.busy #stage, body.busy #stage * { cursor: progress; }
 #chip.has-note #chipStatus { display: none; }
+
+/* ---------- Quickbase options ---------- */
+.qb-toggles { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; }
+.qb-toggles:empty { display: none; }
+.qb-badge { margin-left: 6px; font-size: 10px; padding: 0 5px; border-radius: 8px; background: #e0e7ff; color: #3730a3; }
+#qbOther label { color: #6b7280; }
+.muted { color: #6b7280; font-weight: normal; }
+.ver { margin: 10px 0 0; text-align: right; color: #9ca3af; font-size: 11px; }

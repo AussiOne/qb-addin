@@ -1036,6 +1036,8 @@
     mode = "none"; showHint(""); render();
     const f = form.elements;
     f.url.value = state.url;
+    qbTabSeg = "";
+    renderQbOptions();
     f.vw.value = state.vw; f.vh.value = state.vh;
     f.fit.value = state.fit;
     f.zoomMode.value = state.zoomMode;
@@ -1059,7 +1061,8 @@
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const f = form.elements;
-    const url = f.url.value.trim();
+    const url = normalizeQbUrl(unwrapEmbed(f.url.value));
+    f.url.value = url;
     if (!isHttpsUrl(url)) {
       f.url.setCustomValidity("Enter a full https:// URL");
       f.url.reportValidity();
@@ -1095,7 +1098,166 @@
     if (state.snapMode) setTimeout(() => snapCycle(true), 900);   // update the picture with the new settings
     else loadDashboard();
   });
-  form.elements.url.addEventListener("input", () => form.elements.url.setCustomValidity(""));
+  // ---------- Quickbase address options ----------
+  // Mirrors the toggles in Quickbase's "Share dashboard" dialog. Each toggle reads its state
+  // from the address and writes it back, so a pasted address and the toggles never disagree
+  // and a parameter can never end up in the address twice.
+  // Only parameter names confirmed from real Quickbase embed codes are listed here.
+  // sense "present": toggle is ON when key=on is in the address.
+  // sense "absent":  toggle is ON when the key is NOT in the address (Quickbase adds key=1 to turn it off).
+  const QB_PARAMS = [
+    { key: "embedMode", on: "1", sense: "present", label: "Embed mode",
+      hint: "Quickbase's embedded layout. Added automatically by the Share dialog." },
+    { key: "hidefilters", on: "1", sense: "absent", label: "Show filters",
+      hint: "Dashboard filters bar." },
+    { key: "hidealldashboardtabs", on: "1", sense: "absent", label: "Show all dashboard tabs",
+      hint: "Tabs for the dashboard's other pages." },
+    { key: "denydashboardediting", on: "1", sense: "absent", label: "Allow dashboard editing",
+      hint: "Lets people with permission edit the dashboard from inside the box." },
+    { key: "ifv", on: "1", sense: "present", label: "Hide Quickbase header (ifv=1)", extra: true,
+      hint: "Hides Quickbase's own header bars. Part of the Share dialog's code; also works on reports and forms." }
+  ];
+  // Keys that look like embed switches but aren't listed above are shown as "Other" so they can
+  // still be turned off (e.g. the remaining Share-dialog toggles until their names are confirmed).
+  const QB_SWITCHY = /^(hide|deny|show|allow|embed|no)/i;
+  const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let qbTabSeg = "";   // remembered dashboard-tab segment, so "first tab" can be undone
+
+  function splitUrl(u) {
+    const h = u.indexOf("#");
+    const hash = h >= 0 ? u.slice(h) : "";
+    const base = h >= 0 ? u.slice(0, h) : u;
+    const q = base.indexOf("?");
+    return { path: q >= 0 ? base.slice(0, q) : base, parts: q >= 0 ? base.slice(q + 1).split("&").filter(Boolean) : [], hash };
+  }
+  const joinUrl = (x) => x.path + (x.parts.length ? "?" + x.parts.join("&") : "") + x.hash;
+  const keyOf = (part) => { try { return decodeURIComponent(part.split("=")[0]); } catch (e) { return part.split("=")[0]; } };
+  const valOf = (part) => { const i = part.indexOf("="); return i < 0 ? "" : part.slice(i + 1); };
+
+  function getParam(u, key) {
+    const p = splitUrl(u).parts.find((x) => keyOf(x).toLowerCase() === key.toLowerCase());
+    return p === undefined ? null : valOf(p);
+  }
+  /** Remove every copy of key (any capitalisation), then add key=val once (val null = just remove). */
+  function setParam(u, key, val) {
+    const x = splitUrl(u);
+    const k = key.toLowerCase();
+    const at = x.parts.findIndex((p) => keyOf(p).toLowerCase() === k);   // keep its original position
+    x.parts = x.parts.filter((p, i) => i === at || keyOf(p).toLowerCase() !== k);
+    if (val === null || val === undefined) { if (at >= 0) x.parts.splice(at, 1); }
+    else if (at >= 0) x.parts[at] = key + "=" + val;
+    else x.parts.push(key + "=" + val);
+    return joinUrl(x);
+  }
+  const truthy = (v) => v !== null && !/^(0|false|no|off)$/i.test(v);
+
+  /** Is this a Quickbase address? Returns info or null. */
+  function parseQb(u) {
+    let url;
+    try { url = new URL(u); } catch (e) { return null; }
+    if (url.protocol !== "https:" || !/(^|\.)quickbase\.com$/i.test(url.hostname)) return null;
+    const a = (getParam(u, "a") || "").toLowerCase();
+    const navAction = (url.pathname.match(/\/action\/([^/?]+)/i) || [])[1] || "";
+    const action = (a || navAction).toLowerCase();
+    const kind = action === "showpage" || getParam(u, "pageIdV2") ? "dashboard"
+      : action === "q" ? "report"
+      : /^(dr|er|nwr)$/.test(action) ? "form" : "page";
+    const segs = url.pathname.split("/").filter(Boolean);
+    const tabSeg = segs.length >= 3 && segs[0].toLowerCase() === "db" && GUID.test(segs[2]) ? segs[2] : "";
+    return { kind, tabSeg };
+  }
+
+  /** If an <iframe …> embed code was pasted, keep just its address. */
+  function unwrapEmbed(v) {
+    const m = /<iframe[^>]*\ssrc\s*=\s*["']([^"']+)["']/i.exec(v);
+    if (!m) return v.trim();
+    const t = document.createElement("textarea");
+    t.innerHTML = m[1];               // decode &amp; etc.
+    return t.value.trim();
+  }
+
+  /** Clean up the address: one copy of each known option, canonical spelling and value. */
+  function normalizeQbUrl(u) {
+    if (!parseQb(u)) return u;
+    QB_PARAMS.forEach((p) => {
+      const v = getParam(u, p.key);
+      if (v === null) return;
+      u = truthy(v) ? setParam(u, p.key, p.on) : setParam(u, p.key, null);
+    });
+    return u;
+  }
+
+  function renderQbOptions() {
+    const input = form.elements.url;
+    const u = input.value.trim();
+    const info = parseQb(u);
+    $("qbOpts").hidden = !info;
+    if (!info) return;
+    if (info.tabSeg) qbTabSeg = info.tabSeg;
+    $("qbKind").textContent = "– " + { dashboard: "dashboard / page", report: "report", form: "form", page: "Quickbase page" }[info.kind];
+    const box = $("qbToggles");
+    box.innerHTML = "";
+    const add = (container, id, label, checked, hint, onChange, extra) => {
+      const l = document.createElement("label");
+      l.className = "check" + (extra ? " qb-extra" : "");
+      l.title = hint || "";
+      const c = document.createElement("input");
+      c.type = "checkbox"; c.checked = checked; c.id = id;
+      c.addEventListener("change", () => onChange(c.checked));
+      l.appendChild(c);
+      l.appendChild(document.createTextNode(" " + label));
+      if (extra) { const b = document.createElement("span"); b.className = "qb-badge"; b.textContent = "extra"; l.appendChild(b); }
+      container.appendChild(l);
+    };
+    const apply = (nu) => { input.value = nu; renderQbOptions(); };
+    QB_PARAMS.forEach((p) => {
+      if (p.key !== "ifv" && info.kind !== "dashboard") return;   // dashboard-only switches
+      const present = truthy(getParam(u, p.key));
+      const checked = p.sense === "present" ? present : !present;
+      add(box, "qb_" + p.key, p.label, checked, p.hint, (on) => {
+        const wantPresent = p.sense === "present" ? on : !on;
+        apply(setParam(input.value.trim(), p.key, wantPresent ? p.on : null));
+      }, p.extra);
+    });
+    if (info.kind === "dashboard" && (info.tabSeg || qbTabSeg)) {
+      add(box, "qb_firsttab", "Always open the first tab", !info.tabSeg,
+        "Share links point at one dashboard tab. Removing that part of the address always opens the first tab.",
+        (on) => {
+          const url = new URL(input.value.trim());
+          const segs = url.pathname.split("/");
+          if (on) { const i = segs.findIndex((s) => GUID.test(s)); if (i > 0) segs.splice(i, 1); }
+          else if (qbTabSeg && segs.length >= 3) segs.splice(3, 0, qbTabSeg);
+          const x = splitUrl(input.value.trim());
+          x.path = url.origin + segs.join("/").replace(/\/{2,}/g, "/");
+          apply(joinUrl(x));
+        }, true);
+    }
+    // Other switch-like parameters already in the address
+    const other = $("qbOther");
+    other.innerHTML = "";
+    const known = new Set(QB_PARAMS.map((p) => p.key.toLowerCase()));
+    splitUrl(u).parts.forEach((part) => {
+      const k = keyOf(part);
+      if (known.has(k.toLowerCase()) || !QB_SWITCHY.test(k)) return;
+      add(other, "qbo_" + k, k + "=" + valOf(part) + " (other)", true,
+        "Found in the address. Untick to remove it.", (on) => { if (!on) apply(setParam(input.value.trim(), k, null)); });
+    });
+    $("qbHelp").textContent = info.kind === "dashboard"
+      ? "These match Quickbase's Share dashboard dialog and always reflect the address above. “Show dashboard name”, “Allow full screen” and “Show link to dashboard” will be added once their address codes are confirmed. Anything else found in the address is listed as “other”."
+      : "These always reflect the address above.";
+  }
+
+  form.elements.url.addEventListener("input", () => {
+    const input = form.elements.url;
+    input.setCustomValidity("");
+    const raw = input.value;
+    if (/<iframe/i.test(raw)) input.value = unwrapEmbed(raw);
+    const norm = normalizeQbUrl(input.value.trim());
+    if (norm !== input.value.trim()) input.value = norm;
+    renderQbOptions();
+  });
+
+
 
   function applyBodyFlags() {
     document.body.classList.toggle("toolbar-in-show", !!state.toolbarInShow);
@@ -1256,6 +1418,7 @@
 
   // ---------- Boot ----------
   function start() {
+    $("verLabel").textContent = window.QB_BUILD || "dev";
     loadState();
     applyBodyFlags();
     render();

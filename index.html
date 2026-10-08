@@ -5,8 +5,28 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Quickbase Live Dashboard</title>
+  <!-- Version: updated by `node bump-version.js` on every release. Don't edit by hand. -->
+  <script>
+    window.QB_BUILD = "1.1.0";
+    // Self-update: if the server has a newer version than this (possibly cached) page,
+    // reload once with ?v=<new> so every file is fetched fresh. No cache clearing needed.
+    (function () {
+      try {
+        var tried = new URLSearchParams(location.search).get("v");
+        fetch("version.json?t=" + Date.now(), { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j || !j.version || j.version === window.QB_BUILD || tried === j.version) return;
+            var u = new URL(location.href);
+            u.searchParams.set("v", j.version);
+            location.replace(u.href);
+          })
+          .catch(function () { /* offline: keep running this version */ });
+      } catch (e) { /* very old browser: ignore */ }
+    })();
+  </script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=1.1.0" />
 </head>
 <body>
   <!-- ===== Live view ===== -->
@@ -120,9 +140,17 @@
     <form id="settingsForm" autocomplete="off">
       <h2>Dashboard settings <small>(this slide only)</small></h2>
 
-      <label class="full">Quickbase URL
-        <input name="url" type="url" required placeholder="https://yourrealm.quickbase.com/nav/app/…/action/dashboard?…" />
+      <label class="full">Quickbase URL <small class="muted">– or paste the whole embed code from Quickbase's Share dialog</small>
+        <input name="url" type="text" required spellcheck="false" placeholder="https://yourrealm.quickbase.com/db/…?a=showpage&amp;pageIdV2=…" />
       </label>
+
+      <!-- Shown only when the address is a Quickbase page; always mirrors what's in the address -->
+      <fieldset id="qbOpts" hidden>
+        <legend>Quickbase options <small id="qbKind"></small></legend>
+        <div id="qbToggles" class="qb-toggles"></div>
+        <div id="qbOther" class="qb-toggles"></div>
+        <p class="help full" id="qbHelp"></p>
+      </fieldset>
 
       <fieldset>
         <legend>Layout</legend>
@@ -204,9 +232,10 @@
           <li><b>Settings lost</b> – settings are stored inside the .pptx. Save the presentation after configuring.</li>
         </ul>
       </details>
+      <p class="ver">Add-in version <span id="verLabel"></span></p>
     </form>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1.1.0"></script>
 </body>
 </html>
